@@ -55,6 +55,15 @@ type metrics struct {
 	// Safety controls
 	CircuitBreakerState prometheus.Gauge // 0=normal 1=tripped
 	KillSwitchState     prometheus.Gauge // 0=normal 1=halted
+
+	// Market data (Phase 2B)
+	// QuotesReceived: total quote events decoded from DXLink FEED_DATA frames.
+	QuotesReceived *prometheus.CounterVec // label: symbol
+	// TrackedSymbols: number of symbols currently subscribed on the market streamer.
+	TrackedSymbols prometheus.Gauge
+	// LastQuoteTime: Unix timestamp of the most recently received quote event.
+	// Useful for stale-data alerting: alert if now - LastQuoteTime > threshold.
+	LastQuoteTime prometheus.Gauge
 }
 
 func newMetrics() *metrics {
@@ -124,6 +133,21 @@ func newMetrics() *metrics {
 		KillSwitchState: promauto.NewGauge(prometheus.GaugeOpts{
 			Name: "tastytrade_kill_switch_state",
 			Help: "0=normal, 1=halted",
+		}),
+
+		QuotesReceived: promauto.NewCounterVec(prometheus.CounterOpts{
+			Name: "tastytrade_quotes_received_total",
+			Help: "Total quote events decoded from DXLink FEED_DATA frames",
+		}, []string{"symbol"}),
+
+		TrackedSymbols: promauto.NewGauge(prometheus.GaugeOpts{
+			Name: "tastytrade_tracked_symbols",
+			Help: "Number of symbols currently subscribed on the market streamer",
+		}),
+
+		LastQuoteTime: promauto.NewGauge(prometheus.GaugeOpts{
+			Name: "tastytrade_last_quote_unix_seconds",
+			Help: "Unix timestamp of the most recently received quote event (0 = none yet)",
 		}),
 	}
 }

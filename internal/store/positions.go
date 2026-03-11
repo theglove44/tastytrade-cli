@@ -93,3 +93,43 @@ func (s *sqliteStore) LatestBalance(ctx context.Context, accountID string) (Bala
 	b.Source = Source(sourceStr)
 	return b, nil
 }
+
+// ActivePositionSymbols returns the distinct set of symbols from the most
+// recent snapshot batch for the account. Used by the market streamer to
+// build its initial subscription list on connect/reconnect.
+//
+// "Most recent batch" = all symbols whose snapshotted_at equals the MAX
+// snapshotted_at for the account. This avoids including stale symbols from
+// old snapshot rounds while position count changes between snapshots.
+//
+// Returns an empty slice (not an error) when no snapshots exist yet.
+func (s *sqliteStore) ActivePositionSymbols(ctx context.Context, accountID string) ([]string, error) {
+	const q = `
+		SELECT DISTINCT symbol
+		FROM   positions
+		WHERE  account_number = ?
+		AND    snapshotted_at = (
+			SELECT MAX(snapshotted_at)
+			FROM   positions
+			WHERE  account_number = ?
+		)`
+
+	rows, err := s.db.QueryContext(ctx, q, accountID, accountID)
+	if err != nil {
+		return nil, fmt.Errorf("store.ActivePositionSymbols: query: %w", err)
+	}
+	defer rows.Close()
+
+	var syms []string
+	for rows.Next() {
+		var sym string
+		if err := rows.Scan(&sym); err != nil {
+			return nil, fmt.Errorf("store.ActivePositionSymbols: scan: %w", err)
+		}
+		syms = append(syms, sym)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store.ActivePositionSymbols: rows: %w", err)
+	}
+	return syms, nil
+}

@@ -34,4 +34,10 @@ type Exchange interface {
 	// to the intent log — this guarantees the logged key and the
 	// X-Idempotency-Key HTTP header are always the same value.
 	DryRun(ctx context.Context, accountID string, order models.NewOrder, idempotencyKey string) (models.DryRunResult, error)
+
+	// QuoteToken retrieves a fresh DXLink authentication token from
+	// GET /api-quote-tokens. This endpoint is unversioned — the implementation
+	// must use RequestOptions{SkipVersion: true}.
+	// A new token must be fetched before every DXLink connect and reconnect.
+	QuoteToken(ctx context.Context) (models.QuoteToken, error)
 }

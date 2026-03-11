@@ -159,11 +159,63 @@ type NewOrder struct {
 
 // ── Quote Token ──────────────────────────────────────────────────────────────
 
+// QuoteToken is the response payload from GET /api-quote-tokens.
+// This endpoint is UNVERSIONED — always use RequestOptions{SkipVersion: true}.
+// The token must be re-fetched before every DXLink connect and reconnect.
 type QuoteToken struct {
-	Token          string `json:"token"`
-	DxlinkURL      string `json:"dxlink-url"`
-	WebSocketURL   string `json:"websocket-url"`
-	Level          string `json:"level"`
+	Token        string `json:"token"`
+	DxlinkURL    string `json:"dxlink-url"`    // preferred WS endpoint from server
+	WebSocketURL string `json:"websocket-url"` // fallback
+	Level        string `json:"level"`
+	ExpiresIn    int    `json:"expires-in"` // seconds; 0 if not provided
+}
+
+// ── Market Streamer Wire Types ────────────────────────────────────────────────
+//
+// DXLink wire protocol (spec §1.6).
+// All messages are JSON objects with a "type" discriminator field.
+// Channel 0 is the control channel; data channels are assigned by the server.
+//
+// Handshake sequence (per connect/reconnect):
+//  1. Dial WebSocket (URL from QuoteToken.DxlinkURL or config fallback)
+//  2. Send SETUP:            {"type":"SETUP","channel":0,"version":"0.1","keepaliveTimeout":60,"acceptKeepaliveTimeout":60}
+//  3. Receive SETUP response
+//  4. Send AUTH:             {"type":"AUTH","channel":0,"token":"<QuoteToken.Token>"}
+//  5. Receive AUTH_STATE:    {"type":"AUTH_STATE","channel":0,"state":"AUTHORIZED"}
+//  6. Send CHANNEL_REQUEST:  {"type":"CHANNEL_REQUEST","channel":1,"service":"FEED","parameters":{"contract":"AUTO"}}
+//  7. Receive CHANNEL_OPENED
+//  8. Send FEED_SETUP:       {"type":"FEED_SETUP","channel":1,"acceptAggregationPeriod":0.1,"acceptDataFormat":"COMPACT","acceptEventFields":{"Quote":["eventType","eventSymbol","bidPrice","askPrice","lastPrice","time"]}}
+//  9. Send FEED_SUBSCRIPTION: {"type":"FEED_SUBSCRIPTION","channel":1,"add":[{"type":"Quote","symbol":"<sym>"},...]}
+// 10. Loop: receive FEED_DATA, send KEEPALIVE on channel 0 every 30s
+
+// DXLinkMsg is the minimal envelope used to peek at the "type" field.
+type DXLinkMsg struct {
+	Type    string `json:"type"`
+	Channel int    `json:"channel"`
+}
+
+// DXLinkFeedData carries one or more compact quote rows.
+// Data is an array of arrays — each inner array maps to the field order
+// declared in FEED_SETUP's acceptEventFields.
+// Compact format: ["Quote","SPY",450.10,450.11,450.05,1234567890000]
+type DXLinkFeedData struct {
+	Type    string            `json:"type"`    // "FEED_DATA"
+	Channel int               `json:"channel"`
+	Data    []json.RawMessage `json:"data"`    // array of compact event arrays
+}
+
+// DXLinkAuthState carries the AUTH_STATE response.
+type DXLinkAuthState struct {
+	Type    string `json:"type"`    // "AUTH_STATE"
+	Channel int    `json:"channel"`
+	State   string `json:"state"`   // "AUTHORIZED" | "UNAUTHORIZED"
+}
+
+// DXLinkChannelOpened carries the CHANNEL_OPENED response.
+type DXLinkChannelOpened struct {
+	Type    string `json:"type"`
+	Channel int    `json:"channel"`
+	Service string `json:"service"`
 }
 
 // ── API envelope ─────────────────────────────────────────────────────────────
@@ -257,14 +309,18 @@ type PositionEvent struct {
 	UpdatedAt         time.Time       `json:"updated-at"`
 }
 
-// ── Market Streamer Events (Phase 2B placeholder) ─────────────────────────────
+// ── Market Streamer Events ────────────────────────────────────────────────────
 
 // QuoteEvent carries bid/ask/last for a single symbol from DXLink.
-// Reserved for Phase 2B — not used in Phase 2A.
+// MarkPrice is derived client-side: (bid+ask)/2 when both are non-zero,
+// otherwise last price. If all three are zero the quote is considered stale
+// and MarkStale will be true.
 type QuoteEvent struct {
-	Symbol    string          `json:"eventSymbol"`
-	BidPrice  decimal.Decimal `json:"bidPrice"`
-	AskPrice  decimal.Decimal `json:"askPrice"`
-	LastPrice decimal.Decimal `json:"lastPrice"`
-	EventTime time.Time       `json:"time"`
+	Symbol     string          `json:"eventSymbol"`
+	BidPrice   decimal.Decimal `json:"bidPrice"`
+	AskPrice   decimal.Decimal `json:"askPrice"`
+	LastPrice  decimal.Decimal `json:"lastPrice"`
+	MarkPrice  decimal.Decimal `json:"markPrice"`  // derived — see above
+	MarkStale  bool            `json:"markStale"`  // true when mark cannot be determined
+	EventTime  time.Time       `json:"time"`
 }

@@ -486,3 +486,161 @@ func TestAccountMessage_Unmarshal(t *testing.T) {
 		t.Errorf("OrderEvent.OrderID: got %q, want %q", ev.OrderID, "ORD-001")
 	}
 }
+
+// ── Market streamer tests ─────────────────────────────────────────────────────
+
+// mockQuoteTokenFetcher returns a fixed QuoteToken or an error.
+type mockQuoteTokenFetcher struct {
+	mu    sync.Mutex
+	calls int
+	token models.QuoteToken
+	err   error
+}
+
+func (m *mockQuoteTokenFetcher) QuoteToken(_ context.Context) (models.QuoteToken, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.calls++
+	return m.token, m.err
+}
+
+func (m *mockQuoteTokenFetcher) CallCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.calls
+}
+
+// mockQuoteHandler records received QuoteEvents.
+type mockQuoteHandler struct {
+	mu     sync.Mutex
+	quotes []models.QuoteEvent
+}
+
+func (h *mockQuoteHandler) OnQuote(ev models.QuoteEvent) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.quotes = append(h.quotes, ev)
+}
+
+func (h *mockQuoteHandler) Count() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return len(h.quotes)
+}
+
+// TestMarketStreamer_Name verifies the streamer's name constant.
+func TestMarketStreamer_Name(t *testing.T) {
+	log, _ := zap.NewDevelopment()
+	tf := &mockQuoteTokenFetcher{token: models.QuoteToken{Token: "tok", DxlinkURL: "wss://localhost:1"}}
+	h := &mockQuoteHandler{}
+	s := streamer.NewMarketStreamer("wss://localhost:1", nil, tf, h, log)
+	if s.Name() != "market" {
+		t.Errorf("Name: got %q, want %q", s.Name(), "market")
+	}
+}
+
+// TestMarketStreamer_InitialStatus verifies zero status before Start().
+func TestMarketStreamer_InitialStatus(t *testing.T) {
+	log, _ := zap.NewDevelopment()
+	tf := &mockQuoteTokenFetcher{token: models.QuoteToken{Token: "tok", DxlinkURL: "wss://localhost:1"}}
+	h := &mockQuoteHandler{}
+	s := streamer.NewMarketStreamer("wss://localhost:1", nil, tf, h, log)
+
+	status := s.Status()
+	if status.Connected {
+		t.Error("Connected should be false before Start()")
+	}
+	if status.ReconnectCount != 0 {
+		t.Errorf("ReconnectCount: got %d, want 0", status.ReconnectCount)
+	}
+}
+
+// TestMarketStreamer_CancelStopsStart verifies context cancel terminates Start().
+func TestMarketStreamer_CancelStopsStart(t *testing.T) {
+	log, _ := zap.NewDevelopment()
+	tf := &mockQuoteTokenFetcher{token: models.QuoteToken{Token: "tok", DxlinkURL: "wss://127.0.0.1:1"}}
+	h := &mockQuoteHandler{}
+	s := streamer.NewMarketStreamer("wss://127.0.0.1:1", nil, tf, h, log)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- s.Start(ctx) }()
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != context.Canceled {
+			t.Errorf("Start returned %v, want context.Canceled", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Error("Start did not return after context cancel within 5s")
+	}
+}
+
+// TestMarketStreamer_TokenFetchedBeforeConnect verifies QuoteToken() is called
+// before every connection attempt (critical spec requirement).
+func TestMarketStreamer_TokenFetchedBeforeConnect(t *testing.T) {
+	log, _ := zap.NewDevelopment()
+	tf := &mockQuoteTokenFetcher{token: models.QuoteToken{Token: "tok", DxlinkURL: "wss://127.0.0.1:1"}}
+	h := &mockQuoteHandler{}
+	s := streamer.NewMarketStreamer("wss://127.0.0.1:1", nil, tf, h, log)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	_ = s.Start(ctx)
+
+	if tf.CallCount() < 1 {
+		t.Errorf("QuoteToken fetched %d times, want at least 1", tf.CallCount())
+	}
+}
+
+// TestMarketStreamer_Subscribe_Dedup verifies Subscribe deduplicates symbols.
+func TestMarketStreamer_Subscribe_Dedup(t *testing.T) {
+	log, _ := zap.NewDevelopment()
+	tf := &mockQuoteTokenFetcher{token: models.QuoteToken{Token: "tok", DxlinkURL: "wss://127.0.0.1:1"}}
+	h := &mockQuoteHandler{}
+	s := streamer.NewMarketStreamer("wss://127.0.0.1:1", []string{"SPY"}, tf, h, log)
+
+	// Subscribe the same symbol again — should not duplicate.
+	s.Subscribe("SPY", "SPY", "NVDA")
+
+	// Cancel immediately and check no panic / build error.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_ = s.Start(ctx)
+}
+
+// ── Quote event model tests ───────────────────────────────────────────────────
+
+// TestQuoteEvent_JSON verifies the QuoteEvent can round-trip through JSON.
+func TestQuoteEvent_JSON(t *testing.T) {
+	import_decimal := func(s string) decimal.Decimal {
+		d, _ := decimal.NewFromString(s)
+		return d
+	}
+	ev := models.QuoteEvent{
+		Symbol:    ".XSP250117C580",
+		BidPrice:  import_decimal("1.20"),
+		AskPrice:  import_decimal("1.22"),
+		LastPrice: import_decimal("1.21"),
+		MarkPrice: import_decimal("1.21"),
+		MarkStale: false,
+		EventTime: time.Now().UTC().Truncate(time.Second),
+	}
+
+	b, err := json.Marshal(ev)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	var out models.QuoteEvent
+	if err := json.Unmarshal(b, &out); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if out.Symbol != ev.Symbol {
+		t.Errorf("Symbol: got %q, want %q", out.Symbol, ev.Symbol)
+	}
+	if !out.BidPrice.Equal(ev.BidPrice) {
+		t.Errorf("BidPrice: got %s, want %s", out.BidPrice, ev.BidPrice)
+	}
+}

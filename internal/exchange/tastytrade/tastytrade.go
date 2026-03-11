@@ -183,3 +183,32 @@ func (e *Exchange) DryRun(ctx context.Context, accountID string, order models.Ne
 	}
 	return env.Data, nil
 }
+
+// QuoteToken fetches a fresh DXLink authentication token.
+// The /api-quote-tokens endpoint is unversioned — SkipVersion:true is mandatory.
+// A new token must be retrieved before every DXLink connect and reconnect.
+func (e *Exchange) QuoteToken(ctx context.Context) (models.QuoteToken, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		e.baseURL+"/api-quote-tokens", nil)
+	if err != nil {
+		return models.QuoteToken{}, fmt.Errorf("exchange.QuoteToken: build request: %w", err)
+	}
+
+	resp, err := e.cl.Do(ctx, req, client.FamilyMarketData,
+		client.RequestOptions{SkipVersion: true})
+	if err != nil {
+		return models.QuoteToken{}, fmt.Errorf("exchange.QuoteToken: %w", err)
+	}
+	defer resp.Body.Close()
+
+	data, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return models.QuoteToken{}, fmt.Errorf("exchange.QuoteToken: HTTP %d: %s", resp.StatusCode, data)
+	}
+
+	var env models.DataEnvelope[models.QuoteToken]
+	if err := json.Unmarshal(data, &env); err != nil {
+		return models.QuoteToken{}, fmt.Errorf("exchange.QuoteToken: parse: %w", err)
+	}
+	return env.Data, nil
+}

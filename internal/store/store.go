@@ -59,6 +59,12 @@ type Store interface {
 	// RecentFills returns fills received after 'since', ordered by filled_at asc.
 	RecentFills(ctx context.Context, accountID string, since time.Time) ([]FillRecord, error)
 
+	// ActivePositionSymbols returns the distinct set of symbols from the most
+	// recent position snapshot for the account.
+	// Used by the market streamer to build its initial subscription list.
+	// Returns an empty slice (not an error) if no snapshots exist yet.
+	ActivePositionSymbols(ctx context.Context, accountID string) ([]string, error)
+
 	// Close releases the database connection.
 	// Must be called when the store is no longer needed (typically deferred).
 	Close() error

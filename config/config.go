@@ -61,6 +61,7 @@ type Config struct {
 	UserAgent          string
 	APIVersion         string // Accept-Version header value; empty = omit (use latest)
 	AccountStreamerURL string // WebSocket endpoint for the account streamer
+	DXLinkURL          string // DXLink market data WS endpoint (overridden by QuoteToken response)
 
 	RateLimits RateLimits
 
@@ -125,6 +126,7 @@ func Load() (*Config, error) {
 		UserAgent:          userAgent,
 		APIVersion:         apiVersion,
 		AccountStreamerURL: envOr("TASTYTRADE_ACCOUNT_STREAMER_URL", AccountStreamerURL),
+		DXLinkURL:          envOr("TASTYTRADE_DXLINK_URL", DXLinkBaseURL),
 		RateLimits:         rl,
 		LiveTrading:        liveTrading,
 	}, nil

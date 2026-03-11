@@ -83,3 +83,14 @@ type AccountHandler interface {
 type QuoteHandler interface {
 	OnQuote(event models.QuoteEvent)
 }
+
+// MarketStreamer extends Streamer with symbol subscription management.
+// The concrete *marketStreamer implements this interface.
+// Using MarketStreamer in root.go avoids a type assertion while keeping
+// the Streamer interface minimal.
+type MarketStreamer interface {
+	Streamer
+	// Subscribe adds symbols to the active subscription set.
+	// Safe to call before Start() or from any goroutine.
+	Subscribe(symbols ...string)
+}
