@@ -4,6 +4,7 @@ go 1.22
 
 require (
 	github.com/google/uuid v1.6.0
+	github.com/mattn/go-sqlite3 v1.14.34
 	github.com/prometheus/client_golang v1.19.1
 	github.com/shopspring/decimal v1.3.1
 	github.com/spf13/cobra v1.8.1
@@ -11,6 +12,7 @@ require (
 	go.uber.org/zap v1.27.0
 	golang.org/x/term v0.18.0
 	golang.org/x/time v0.5.0
+	nhooyr.io/websocket v1.8.17
 )
 
 require (

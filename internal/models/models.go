@@ -5,6 +5,7 @@
 package models
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/shopspring/decimal"
@@ -201,4 +202,69 @@ type ErrorEnvelope struct {
 			Message string `json:"message"`
 		} `json:"errors,omitempty"`
 	} `json:"error"`
+}
+
+// ── Account Streamer Events ───────────────────────────────────────────────────
+//
+// The account streamer delivers JSON messages over WebSocket.
+// Each message has a "type" field that routes to the appropriate concrete
+// struct.  The raw "data" payload is decoded separately to avoid a large
+// discriminated-union decode.
+//
+// Wire protocol confirmed from spec §1.5:
+//   auth-token = raw access_token — NO "Bearer" prefix
+//   {"action":"connect",      "value":["ACCT#"],"request-id":1,"auth-token":"..."}
+//   {"action":"account-subscribe","value":["ACCT#"],"request-id":2,"auth-token":"..."}
+//   {"action":"heartbeat",    "request-id":null, "auth-token":"..."}
+
+// AccountMessage is the outer envelope for every account streamer frame.
+// Type routes the Data payload to the correct concrete struct.
+type AccountMessage struct {
+	Type      string          `json:"type"`   // "order", "account-balance", "position", "heartbeat-ack"
+	Action    string          `json:"action"` // "Snapshot", "Change"
+	RequestID *int            `json:"request-id,omitempty"`
+	Data      json.RawMessage `json:"data"`
+}
+
+// OrderEvent is delivered when an order status changes (including fills).
+// Status=="Filled" with a non-nil FilledAt is a confirmed execution.
+type OrderEvent struct {
+	AccountNumber string     `json:"account-number"`
+	OrderID       string     `json:"id"`
+	Status        string     `json:"status"` // Received, Live, Filled, Cancelled, Rejected
+	FilledAt      *time.Time `json:"filled-at,omitempty"`
+	Legs          []OrderLeg `json:"legs"` // reuses existing OrderLeg
+}
+
+// BalanceEvent carries net-liquidating value and buying-power after a change.
+// This is the authoritative source for NLQ guard checks and the NLQDollars metric.
+type BalanceEvent struct {
+	AccountNumber       string          `json:"account-number"`
+	NetLiquidatingValue decimal.Decimal `json:"net-liquidating-value"`
+	BuyingPower         decimal.Decimal `json:"equity-buying-power"`
+	UpdatedAt           time.Time       `json:"updated-at"`
+}
+
+// PositionEvent is delivered when a position opens, changes, or closes.
+// Action: "Open", "Change", "Close"
+type PositionEvent struct {
+	AccountNumber     string          `json:"account-number"`
+	Symbol            string          `json:"symbol"`
+	InstrumentType    string          `json:"instrument-type"`
+	Quantity          decimal.Decimal `json:"quantity"`
+	QuantityDirection string          `json:"quantity-direction"` // Long / Short
+	Action            string          `json:"action"`             // Open / Change / Close
+	UpdatedAt         time.Time       `json:"updated-at"`
+}
+
+// ── Market Streamer Events (Phase 2B placeholder) ─────────────────────────────
+
+// QuoteEvent carries bid/ask/last for a single symbol from DXLink.
+// Reserved for Phase 2B — not used in Phase 2A.
+type QuoteEvent struct {
+	Symbol    string          `json:"eventSymbol"`
+	BidPrice  decimal.Decimal `json:"bidPrice"`
+	AskPrice  decimal.Decimal `json:"askPrice"`
+	LastPrice decimal.Decimal `json:"lastPrice"`
+	EventTime time.Time       `json:"time"`
 }

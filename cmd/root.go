@@ -21,6 +21,8 @@ import (
 	"github.com/theglove44/tastytrade-cli/internal/exchange"
 	ttexchange "github.com/theglove44/tastytrade-cli/internal/exchange/tastytrade"
 	"github.com/theglove44/tastytrade-cli/internal/metrics"
+	"github.com/theglove44/tastytrade-cli/internal/store"
+	"github.com/theglove44/tastytrade-cli/internal/streamer"
 	"go.uber.org/zap"
 )
 
@@ -28,11 +30,13 @@ var (
 	cfg    *config.Config
 	cl     *client.Client
 	ex     exchange.Exchange // commands call ex, not cl directly
+	st     store.Store       // nil when store is disabled (e.g. login command)
 	logger *zap.Logger
 
 	// global flags
-	flagJSON    bool
-	flagVerbose bool
+	flagJSON           bool
+	flagVerbose        bool
+	flagNoStreamer      bool // --no-streamer: skip account streamer startup
 )
 
 var rootCmd = &cobra.Command{
@@ -47,6 +51,7 @@ All credentials are stored in the OS keychain. Run 'tt login' first.`,
 		case "login", "kill", "resume":
 			return nil
 		}
+
 		var err error
 		cfg, err = config.Load()
 		if err != nil {
@@ -59,6 +64,47 @@ All credentials are stored in the OS keychain. Run 'tt login' first.`,
 		// Binds to 127.0.0.1 only. Address from TASTYTRADE_METRICS_ADDR or :9090.
 		metricsAddr := metrics.Addr(logger)
 		metrics.Serve(cmd.Context(), metricsAddr, logger)
+
+		// Open the SQLite store. Failure is non-fatal: log and continue without
+		// persistence. The streamer will not be started if the store fails.
+		var storeErr error
+		st, storeErr = store.Open(logger)
+		if storeErr != nil {
+			logger.Warn("store unavailable — persistence and streamer disabled",
+				zap.Error(storeErr))
+		}
+
+		// Start the account streamer in a background goroutine unless:
+		//   - --no-streamer flag is set
+		//   - store failed to open (no point streaming without persistence)
+		//   - no account ID configured
+		if !flagNoStreamer && st != nil && cfg.AccountID != "" {
+			handler := newAccountEventHandler(st, logger)
+			acctStreamer := streamer.NewAccountStreamer(
+				cfg.AccountStreamerURL,
+				cfg.AccountID,
+				cl,
+				handler,
+				logger,
+			)
+			go func() {
+				if err := acctStreamer.Start(cmd.Context()); err != nil {
+					logger.Info("account streamer exited", zap.Error(err))
+				}
+				// Close store when streamer exits (context cancelled = command done).
+				if closeErr := st.Close(); closeErr != nil {
+					logger.Warn("store close error", zap.Error(closeErr))
+				}
+			}()
+		} else if st != nil && (flagNoStreamer || cfg.AccountID == "") {
+			// Store opened but streamer skipped — close store when command exits.
+			go func() {
+				<-cmd.Context().Done()
+				if closeErr := st.Close(); closeErr != nil {
+					logger.Warn("store close error", zap.Error(closeErr))
+				}
+			}()
+		}
 
 		return nil
 	},
@@ -89,6 +135,8 @@ func init() {
 		"Output as stable JSON (for automation pipeline consumption)")
 	rootCmd.PersistentFlags().BoolVar(&flagVerbose, "verbose", false,
 		"Development-mode logging (human-readable, debug level)")
+	rootCmd.PersistentFlags().BoolVar(&flagNoStreamer, "no-streamer", false,
+		"Skip account streamer startup (useful for one-shot commands in scripts)")
 
 	rootCmd.AddCommand(
 		loginCmd,

@@ -55,11 +55,12 @@ func DefaultRateLimits() RateLimits {
 
 // Config is the full runtime configuration for the CLI.
 type Config struct {
-	BaseURL    string
-	AccountID  string
-	ClientID   string
-	UserAgent  string
-	APIVersion string // Accept-Version header value; empty = omit (use latest)
+	BaseURL            string
+	AccountID          string
+	ClientID           string
+	UserAgent          string
+	APIVersion         string // Accept-Version header value; empty = omit (use latest)
+	AccountStreamerURL string // WebSocket endpoint for the account streamer
 
 	RateLimits RateLimits
 
@@ -118,13 +119,14 @@ func Load() (*Config, error) {
 	liveTrading := liveEnv && isProd
 
 	return &Config{
-		BaseURL:     baseURL,
-		AccountID:   os.Getenv("TASTYTRADE_ACCOUNT_ID"),
-		ClientID:    clientID,
-		UserAgent:   userAgent,
-		APIVersion:  apiVersion,
-		RateLimits:  rl,
-		LiveTrading: liveTrading,
+		BaseURL:            baseURL,
+		AccountID:          os.Getenv("TASTYTRADE_ACCOUNT_ID"),
+		ClientID:           clientID,
+		UserAgent:          userAgent,
+		APIVersion:         apiVersion,
+		AccountStreamerURL: envOr("TASTYTRADE_ACCOUNT_STREAMER_URL", AccountStreamerURL),
+		RateLimits:         rl,
+		LiveTrading:        liveTrading,
 	}, nil
 }
 
