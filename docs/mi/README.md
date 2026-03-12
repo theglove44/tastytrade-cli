@@ -37,3 +37,5 @@ Examples:
   - accounts endpoint parsing investigation
 - `MI-2026-03-12-phase2c-import-diff-review.md`
   - phase2c import diff review, architectural additions, and regression risks
+- `MI-2026-03-12-phase3a-reconciler-import-review.md`
+  - phase3a reconciler import review, safe selective merge, and validation

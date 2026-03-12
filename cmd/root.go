@@ -39,6 +39,7 @@ import (
 	ttexchange "github.com/theglove44/tastytrade-cli/internal/exchange/tastytrade"
 	"github.com/theglove44/tastytrade-cli/internal/metrics"
 	"github.com/theglove44/tastytrade-cli/internal/models"
+	"github.com/theglove44/tastytrade-cli/internal/reconciler"
 	"github.com/theglove44/tastytrade-cli/internal/store"
 	"github.com/theglove44/tastytrade-cli/internal/streamer"
 	"github.com/theglove44/tastytrade-cli/internal/valuation"
@@ -142,10 +143,10 @@ All credentials are stored in the OS keychain. Run 'tt login' first.`,
 		}()
 
 		// ── Consumer goroutines with drain WaitGroup ──────────────────────────
-		// wg tracks all four consumer goroutines.
+		// wg tracks the four event-bus consumer goroutines plus the reconciler.
 		// Shutdown order:
 		//   1. Bus.Close() → subscriber channels close → range loops exit.
-		//   2. wg.Wait() → all consumers have drained their channels.
+		//   2. wg.Wait() → all consumers AND the reconciler have exited.
 		//   3. st.Close() → safe: no writer goroutine is alive.
 		var wg sync.WaitGroup
 		wg.Add(4)
@@ -154,6 +155,29 @@ All credentials are stored in the OS keychain. Run 'tt login' first.`,
 		go balanceConsumer(balanceBus.Subscribe(64), st, logger, &wg)
 		go positionConsumer(positionBus.Subscribe(128), book, mktStreamer, logger, &wg)
 		go quoteConsumer(quoteBus.Subscribe(256), book, logger, &wg)
+
+		// ── Reconciler ────────────────────────────────────────────────────────
+		// Start the reconciler only when an account ID is configured.
+		// It runs in its own goroutine, tracked by wg, and stops cleanly when
+		// ctx is cancelled (the same context that stops the streamers).
+		if cfg.AccountID != "" {
+			wg.Add(1)
+			rec := reconciler.New(
+				ex,
+				st,
+				book,
+				cfg.AccountID,
+				reconciler.Config{
+					Interval:         cfg.ReconcileInterval,
+					AbsenceThreshold: cfg.ReconcileAbsenceThreshold,
+				},
+				logger,
+			)
+			go func() {
+				defer wg.Done()
+				rec.Start(cmd.Context())
+			}()
+		}
 
 		// ── Account streamer ──────────────────────────────────────────────────
 		acctPublisher := newAccountPublisher(orderBus, balanceBus, positionBus, logger)

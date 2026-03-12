@@ -70,6 +70,11 @@ type metrics struct {
 	// subscriber channel was full at publish time.
 	// label: bus — bounded set: order | balance | position | quote
 	BusDroppedEvents *prometheus.CounterVec
+
+	// Reconciler observability (Phase 3A)
+	ReconcileRunsTotal          prometheus.Counter
+	ReconcileErrorsTotal        prometheus.Counter
+	ReconcilePositionsCorrected prometheus.Counter
 }
 
 func newMetrics() *metrics {
@@ -160,5 +165,18 @@ func newMetrics() *metrics {
 			Name: "tastytrade_bus_dropped_events_total",
 			Help: "Total events dropped by the internal bus because the subscriber channel was full. Non-zero values indicate back-pressure on a consumer; size the channel or speed up the consumer.",
 		}, []string{"bus"}),
+
+		ReconcileRunsTotal: promauto.NewCounter(prometheus.CounterOpts{
+			Name: "tastytrade_reconcile_runs_total",
+			Help: "Total reconciliation passes attempted (success + failure).",
+		}),
+		ReconcileErrorsTotal: promauto.NewCounter(prometheus.CounterOpts{
+			Name: "tastytrade_reconcile_errors_total",
+			Help: "Reconciliation passes that failed due to a REST error. Non-zero values indicate connectivity or auth problems with the Positions endpoint.",
+		}),
+		ReconcilePositionsCorrected: promauto.NewCounter(prometheus.CounterOpts{
+			Name: "tastytrade_reconcile_positions_corrected_total",
+			Help: "MarkBook entries patched by the reconciler (new positions added + zero-cost-basis entries corrected).",
+		}),
 	}
 }
