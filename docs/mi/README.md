@@ -35,3 +35,5 @@ Examples:
   - source detail also preserved in legacy note: `docs/auth-fix-review.md`
 - `MI-2026-03-12-accounts-empty-output.md`
   - accounts endpoint parsing investigation
+- `MI-2026-03-12-phase2c-import-diff-review.md`
+  - phase2c import diff review, architectural additions, and regression risks

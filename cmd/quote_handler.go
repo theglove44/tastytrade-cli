@@ -3,51 +3,30 @@ package cmd
 import (
 	"go.uber.org/zap"
 
-	"github.com/theglove44/tastytrade-cli/internal/client"
+	"github.com/theglove44/tastytrade-cli/internal/bus"
 	"github.com/theglove44/tastytrade-cli/internal/models"
-	"github.com/theglove44/tastytrade-cli/internal/valuation"
 )
 
-// quoteEventHandler implements streamer.QuoteHandler.
-// It bridges DXLink quote events to:
-//   - MarkBook.ApplyQuote() for in-memory mark-to-market state
-//   - Prometheus metrics: QuotesReceived, LastQuoteTime
+// quotePublisher implements streamer.QuoteHandler.
 //
-// Called from the market streamer's dispatch goroutine — must not block.
-// All work is O(1) mutex operations on the MarkBook.
-type quoteEventHandler struct {
-	book *valuation.MarkBook
-	log  *zap.Logger
+// Its only job is to forward DXLink quote events onto quoteBus.
+// Side-effects (MarkBook.ApplyQuote, Prometheus metrics) live in the
+// quoteConsumer goroutine wired in root.go.
+//
+// This keeps the market streamer's dispatch goroutine hot-path free of any
+// mutex contention from store or MarkBook operations.
+type quotePublisher struct {
+	quoteBus *bus.Broker[models.QuoteEvent]
+	log      *zap.Logger
 }
 
-// newQuoteEventHandler creates a handler backed by the given MarkBook.
-func newQuoteEventHandler(book *valuation.MarkBook, log *zap.Logger) *quoteEventHandler {
-	return &quoteEventHandler{book: book, log: log}
+// newQuotePublisher creates a quotePublisher backed by the given bus.
+func newQuotePublisher(quoteBus *bus.Broker[models.QuoteEvent], log *zap.Logger) *quotePublisher {
+	return &quotePublisher{quoteBus: quoteBus, log: log}
 }
 
 // OnQuote implements streamer.QuoteHandler.
-// Applies the quote to the MarkBook and updates Prometheus metrics.
-func (h *quoteEventHandler) OnQuote(ev models.QuoteEvent) {
-	snap := h.book.ApplyQuote(
-		ev.Symbol,
-		ev.BidPrice,
-		ev.AskPrice,
-		ev.LastPrice,
-		ev.MarkPrice,
-		ev.MarkStale,
-		ev.EventTime,
-	)
-
-	// Update metrics — both are non-blocking gauge/counter operations.
-	client.Metrics.QuotesReceived.WithLabelValues(ev.Symbol).Inc()
-	client.Metrics.LastQuoteTime.SetToCurrentTime()
-
-	if h.log.Core().Enabled(zap.DebugLevel) {
-		h.log.Debug("quote applied",
-			zap.String("symbol", ev.Symbol),
-			zap.String("mark", snap.MarkPrice.String()),
-			zap.Bool("stale", snap.MarkStale),
-			zap.String("unrealized_pnl", snap.UnrealizedPnL.String()),
-		)
-	}
+// Publishes the event to quoteBus. Non-blocking.
+func (p *quotePublisher) OnQuote(ev models.QuoteEvent) {
+	p.quoteBus.Publish(ev)
 }

@@ -9,22 +9,36 @@
 //	tt dry-run  [--json]  — simulate an order (dry-run only, never submits)
 //	tt kill               — arm the file-based kill switch
 //	tt resume             — disarm the file-based kill switch
+//
+// Shutdown order (streamers running):
+//
+//  1. Context cancelled → account + market streamers exit their Start() loops.
+//  2. Shutdown goroutine calls Close() on all four event buses.
+//  3. Bus Close() closes subscriber channels → consumer range loops drain and exit.
+//  4. wg.Wait() blocks until all four consumers have returned.
+//  5. st.Close() flushes and closes SQLite — safe because all writers have exited.
 package cmd
 
 import (
 	"context"
 	"fmt"
+	"math/bits"
 	"os"
+	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/shopspring/decimal"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 
 	"github.com/theglove44/tastytrade-cli/config"
+	"github.com/theglove44/tastytrade-cli/internal/bus"
 	"github.com/theglove44/tastytrade-cli/internal/client"
 	"github.com/theglove44/tastytrade-cli/internal/exchange"
 	ttexchange "github.com/theglove44/tastytrade-cli/internal/exchange/tastytrade"
 	"github.com/theglove44/tastytrade-cli/internal/metrics"
+	"github.com/theglove44/tastytrade-cli/internal/models"
 	"github.com/theglove44/tastytrade-cli/internal/store"
 	"github.com/theglove44/tastytrade-cli/internal/streamer"
 	"github.com/theglove44/tastytrade-cli/internal/valuation"
@@ -86,26 +100,33 @@ All credentials are stored in the OS keychain. Run 'tt login' first.`,
 			return nil
 		}
 
-		// ── Startup position seeding ─────────────────────────────────────────
-		// Fetch open positions via REST before constructing the market streamer,
-		// so the initial FEED_SUBSCRIPTION contains all currently-open symbols.
-		// This runs synchronously in PersistentPreRunE — it is a single REST
-		// call, so the latency hit is acceptable and guarantees the streamer
-		// starts with a populated symbol set.
+		// ── Event buses ───────────────────────────────────────────────────────
+		// Each bus is constructed with an onDrop callback that:
+		//   (a) increments the BusDroppedEvents Prometheus counter (always), and
+		//   (b) emits a zap.Warn log at power-of-2 drop counts to avoid log spam
+		//       while still surfacing the condition: 1st, 2nd, 4th, 8th … drop.
 		//
-		// Failure is non-fatal: log and continue with an empty MarkBook.
-		// The account streamer's OnPositionEvent will backfill as events arrive.
+		// The rate-limited log uses a shared atomic counter per bus name so the
+		// first drop always logs immediately, but subsequent drops log only at
+		// doubling intervals. This gives immediate visibility without flooding
+		// the log during a persistent back-pressure episode.
+		orderBus := bus.New[models.OrderEvent](
+			makeDropHandler("order", logger))
+		balanceBus := bus.New[models.BalanceEvent](
+			makeDropHandler("balance", logger))
+		positionBus := bus.New[models.PositionEvent](
+			makeDropHandler("position", logger))
+		quoteBus := bus.New[models.QuoteEvent](
+			makeDropHandler("quote", logger))
+
+		// ── Startup position seeding ──────────────────────────────────────────
 		var initSyms []string
 		if cfg.AccountID != "" {
 			initSyms = seedMarkBookFromREST(cmd.Context(), ex, book, cfg.AccountID, logger)
 		}
 
-		// ── Market streamer ──────────────────────────────────────────────────
-		// Constructed first so the account handler can hold a reference to it.
-		// The account handler calls mktStreamer.Subscribe() when new positions
-		// arrive via OnPositionEvent — Subscribe() is safe to call before and
-		// after Start().
-		quoteHandler := newQuoteEventHandler(book, logger)
+		// ── Market streamer ───────────────────────────────────────────────────
+		quoteHandler := newQuotePublisher(quoteBus, logger)
 		mktStreamer := streamer.NewMarketStreamer(
 			cfg.DXLinkURL,
 			initSyms,
@@ -120,30 +141,55 @@ All credentials are stored in the OS keychain. Run 'tt login' first.`,
 			}
 		}()
 
-		// ── Account streamer ─────────────────────────────────────────────────
+		// ── Consumer goroutines with drain WaitGroup ──────────────────────────
+		// wg tracks all four consumer goroutines.
+		// Shutdown order:
+		//   1. Bus.Close() → subscriber channels close → range loops exit.
+		//   2. wg.Wait() → all consumers have drained their channels.
+		//   3. st.Close() → safe: no writer goroutine is alive.
+		var wg sync.WaitGroup
+		wg.Add(4)
+
+		go orderConsumer(orderBus.Subscribe(128), st, logger, &wg)
+		go balanceConsumer(balanceBus.Subscribe(64), st, logger, &wg)
+		go positionConsumer(positionBus.Subscribe(128), book, mktStreamer, logger, &wg)
+		go quoteConsumer(quoteBus.Subscribe(256), book, logger, &wg)
+
+		// ── Account streamer ──────────────────────────────────────────────────
+		acctPublisher := newAccountPublisher(orderBus, balanceBus, positionBus, logger)
+
+		shutdown := func() {
+			// Step 1: close all buses — signals consumers to drain and exit.
+			orderBus.Close()
+			balanceBus.Close()
+			positionBus.Close()
+			quoteBus.Close()
+			// Step 2: wait for every consumer to finish draining.
+			wg.Wait()
+			// Step 3: close the store — all writers have exited.
+			if cerr := st.Close(); cerr != nil {
+				logger.Warn("store close error", zap.Error(cerr))
+			}
+		}
+
 		if cfg.AccountID != "" {
-			acctHandler := newAccountEventHandler(st, book, mktStreamer, logger)
 			acctStreamer := streamer.NewAccountStreamer(
 				cfg.AccountStreamerURL,
 				cfg.AccountID,
 				cl,
-				acctHandler,
+				acctPublisher,
 				logger,
 			)
 			go func() {
 				if serr := acctStreamer.Start(cmd.Context()); serr != nil {
 					logger.Info("account streamer exited", zap.Error(serr))
 				}
-				if cerr := st.Close(); cerr != nil {
-					logger.Warn("store close error", zap.Error(cerr))
-				}
+				shutdown()
 			}()
 		} else {
 			go func() {
 				<-cmd.Context().Done()
-				if cerr := st.Close(); cerr != nil {
-					logger.Warn("store close error", zap.Error(cerr))
-				}
+				shutdown()
 			}()
 		}
 
@@ -151,17 +197,185 @@ All credentials are stored in the OS keychain. Run 'tt login' first.`,
 	},
 }
 
-// seedMarkBookFromREST fetches open positions for the account and loads them
-// into the MarkBook. Returns the list of symbols for the initial market
-// streamer subscription.
+// makeDropHandler returns an onDrop callback for a named bus.
+// It increments the BusDroppedEvents Prometheus counter on every drop and
+// emits a zap.Warn at power-of-2 drop counts (1, 2, 4, 8, …) to make drops
+// immediately visible without producing one log line per event.
 //
-// The REST Position model carries AverageOpenPrice — this is the correct cost
-// basis. Using REST seeding gives the valuation layer accurate PnL from the
-// moment the market streamer receives its first quote, without waiting for
-// a PositionEvent snapshot from the account streamer.
-//
-// Timeout: 10 seconds. On any error, returns whatever symbols were loaded
-// before the failure (partial seeding is better than no seeding).
+// Using power-of-2 thresholds means:
+//   - The very first drop always logs (critical for order/position buses).
+//   - A sustained back-pressure episode produces O(log N) log lines, not O(N).
+//   - The interval between log lines grows, giving an operator time to act.
+func makeDropHandler(busName string, log *zap.Logger) func() {
+	var count atomic.Int64
+	return func() {
+		client.Metrics.BusDroppedEvents.WithLabelValues(busName).Inc()
+		n := count.Add(1)
+		// Log at 1, 2, 4, 8, 16 … (when n is a power of two).
+		// bits.OnesCount64 == 1 iff n is a power of two (and n > 0).
+		if bits.OnesCount64(uint64(n)) == 1 {
+			log.Warn("bus: event dropped — subscriber channel full",
+				zap.String("bus", busName),
+				zap.Int64("total_dropped", n),
+			)
+		}
+	}
+}
+
+// ── Consumer goroutines ───────────────────────────────────────────────────────
+// Each consumer calls wg.Done() via defer when its range loop exits (i.e. when
+// its bus channel is closed and fully drained). This guarantees the WaitGroup
+// is decremented exactly once per consumer regardless of how the loop exits.
+
+// orderConsumer drains the order event channel and persists confirmed fills.
+func orderConsumer(ch <-chan models.OrderEvent, st store.Store, log *zap.Logger, wg *sync.WaitGroup) {
+	defer wg.Done()
+	for ev := range ch {
+		if ev.Status != "Filled" {
+			continue
+		}
+
+		symbol, action, qty, price := "", "", "0", "0"
+		if len(ev.Legs) > 0 {
+			leg := ev.Legs[0]
+			symbol = leg.Symbol
+			action = leg.Action
+			qty = leg.FillQuantity.String()
+			price = leg.FillPrice.String()
+		}
+
+		filledAt := ev.FilledAt
+		if filledAt == nil {
+			log.Warn("orderConsumer: Filled status but nil FilledAt — using now",
+				zap.String("order_id", ev.OrderID))
+			now := clock()
+			filledAt = &now
+		}
+
+		rec := store.FillRecord{
+			OrderID:       ev.OrderID,
+			AccountNumber: ev.AccountNumber,
+			Symbol:        symbol,
+			Action:        action,
+			Quantity:      qty,
+			FillPrice:     price,
+			FilledAt:      *filledAt,
+			Strategy:      "",
+			Source:        store.SourceStreamer,
+		}
+		if err := st.WriteFill(context.Background(), rec); err != nil {
+			log.Error("orderConsumer: WriteFill failed",
+				zap.String("order_id", ev.OrderID),
+				zap.Error(err),
+			)
+			continue
+		}
+		client.Metrics.OrdersFilled.WithLabelValues("").Inc()
+		log.Info("fill persisted",
+			zap.String("order_id", ev.OrderID),
+			zap.String("symbol", symbol),
+		)
+	}
+}
+
+// balanceConsumer drains the balance event channel and persists balance records.
+func balanceConsumer(ch <-chan models.BalanceEvent, st store.Store, log *zap.Logger, wg *sync.WaitGroup) {
+	defer wg.Done()
+	for ev := range ch {
+		rec := store.BalanceRecord{
+			AccountNumber:       ev.AccountNumber,
+			NetLiquidatingValue: ev.NetLiquidatingValue.String(),
+			BuyingPower:         ev.BuyingPower.String(),
+			UpdatedAt:           ev.UpdatedAt,
+			Source:              store.SourceStreamer,
+		}
+		if err := st.WriteBalance(context.Background(), rec); err != nil {
+			log.Error("balanceConsumer: WriteBalance failed",
+				zap.String("account", ev.AccountNumber),
+				zap.Error(err),
+			)
+			continue
+		}
+		nlq, _ := ev.NetLiquidatingValue.Float64()
+		client.Metrics.NLQDollars.Set(nlq)
+		log.Debug("balance updated",
+			zap.String("nlq", ev.NetLiquidatingValue.String()),
+			zap.String("buying_power", ev.BuyingPower.String()),
+		)
+	}
+}
+
+// positionConsumer drains the position event channel and applies changes to
+// the MarkBook and market streamer subscription set.
+func positionConsumer(
+	ch <-chan models.PositionEvent,
+	book *valuation.MarkBook,
+	mktStreamer streamer.MarketStreamer,
+	log *zap.Logger,
+	wg *sync.WaitGroup,
+) {
+	defer wg.Done()
+	for ev := range ch {
+		switch ev.Action {
+		case "Open", "Change":
+			book.LoadPosition(
+				ev.Symbol,
+				ev.AccountNumber,
+				ev.Quantity.String(),
+				ev.QuantityDirection,
+				decimal.Zero,
+			)
+			if mktStreamer != nil {
+				mktStreamer.Subscribe(ev.Symbol)
+			}
+			if ev.Action == "Open" {
+				client.Metrics.OpenPositions.Inc()
+			}
+			log.Debug("position opened/changed",
+				zap.String("symbol", ev.Symbol),
+				zap.String("action", ev.Action),
+				zap.String("qty", ev.Quantity.String()),
+				zap.String("direction", ev.QuantityDirection),
+			)
+
+		case "Close":
+			book.RemovePosition(ev.Symbol)
+			client.Metrics.OpenPositions.Dec()
+			log.Debug("position closed", zap.String("symbol", ev.Symbol))
+		}
+	}
+}
+
+// quoteConsumer drains the quote event channel and applies each quote to the
+// MarkBook, updating Prometheus metrics.
+func quoteConsumer(ch <-chan models.QuoteEvent, book *valuation.MarkBook, log *zap.Logger, wg *sync.WaitGroup) {
+	defer wg.Done()
+	for ev := range ch {
+		snap := book.ApplyQuote(
+			ev.Symbol,
+			ev.BidPrice,
+			ev.AskPrice,
+			ev.LastPrice,
+			ev.MarkPrice,
+			ev.MarkStale,
+			ev.EventTime,
+		)
+		client.Metrics.QuotesReceived.WithLabelValues(ev.Symbol).Inc()
+		client.Metrics.LastQuoteTime.SetToCurrentTime()
+
+		if log.Core().Enabled(zap.DebugLevel) {
+			log.Debug("quote applied",
+				zap.String("symbol", ev.Symbol),
+				zap.String("mark", snap.MarkPrice.String()),
+				zap.Bool("stale", snap.MarkStale),
+				zap.String("unrealized_pnl", snap.UnrealizedPnL.String()),
+			)
+		}
+	}
+}
+
+// ── seedMarkBookFromREST ──────────────────────────────────────────────────────
+
 func seedMarkBookFromREST(
 	ctx context.Context,
 	ex exchange.Exchange,
@@ -183,13 +397,8 @@ func seedMarkBookFromREST(
 
 	syms := make([]string, 0, len(positions))
 	for _, p := range positions {
-		// Use AverageOpenPrice from REST — this is the true cost basis.
-		// The account streamer PositionEvent does not carry this field,
-		// so REST seeding is the only way to get it at startup.
 		avgOpen := p.AverageOpenPrice
 		if avgOpen.IsZero() {
-			// Fallback: some instrument types may not populate this field.
-			// ClosePrice (prior day) is a reasonable proxy until updated.
 			avgOpen = p.ClosePrice
 		}
 		book.LoadPosition(

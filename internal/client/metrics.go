@@ -32,9 +32,9 @@ var Metrics = newMetrics()
 
 type metrics struct {
 	// Orders
-	OrdersSubmitted *prometheus.CounterVec   // label: strategy
-	OrdersFilled    *prometheus.CounterVec   // label: strategy
-	OrderLatency    prometheus.Histogram     // time from dry-run to fill event
+	OrdersSubmitted *prometheus.CounterVec // label: strategy
+	OrdersFilled    *prometheus.CounterVec // label: strategy
+	OrderLatency    prometheus.Histogram   // time from dry-run to fill event
 
 	// API errors + rate limits
 	APIErrors       *prometheus.CounterVec   // label: status_code
@@ -42,15 +42,15 @@ type metrics struct {
 	RequestDuration *prometheus.HistogramVec // label: family, method
 
 	// Auth
-	TokenRefreshes  *prometheus.CounterVec   // label: outcome (ok, fail)
+	TokenRefreshes *prometheus.CounterVec // label: outcome (ok, fail)
 
 	// Streamers
 	StreamerReconnects *prometheus.CounterVec // label: streamer (account, market)
 	StreamerUptime     *prometheus.GaugeVec   // label: streamer — seconds since last connect
 
 	// Account state
-	NLQDollars     prometheus.Gauge
-	OpenPositions  prometheus.Gauge
+	NLQDollars    prometheus.Gauge
+	OpenPositions prometheus.Gauge
 
 	// Safety controls
 	CircuitBreakerState prometheus.Gauge // 0=normal 1=tripped
@@ -64,6 +64,12 @@ type metrics struct {
 	// LastQuoteTime: Unix timestamp of the most recently received quote event.
 	// Useful for stale-data alerting: alert if now - LastQuoteTime > threshold.
 	LastQuoteTime prometheus.Gauge
+
+	// Bus observability (Phase 2C hardening)
+	// BusDroppedEvents counts events dropped by the internal bus because the
+	// subscriber channel was full at publish time.
+	// label: bus — bounded set: order | balance | position | quote
+	BusDroppedEvents *prometheus.CounterVec
 }
 
 func newMetrics() *metrics {
@@ -149,5 +155,10 @@ func newMetrics() *metrics {
 			Name: "tastytrade_last_quote_unix_seconds",
 			Help: "Unix timestamp of the most recently received quote event (0 = none yet)",
 		}),
+
+		BusDroppedEvents: promauto.NewCounterVec(prometheus.CounterOpts{
+			Name: "tastytrade_bus_dropped_events_total",
+			Help: "Total events dropped by the internal bus because the subscriber channel was full. Non-zero values indicate back-pressure on a consumer; size the channel or speed up the consumer.",
+		}, []string{"bus"}),
 	}
 }

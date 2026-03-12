@@ -46,10 +46,15 @@ import (
 )
 
 const (
-	marketStreamerName  = "market"
+	marketStreamerName = "market"
 	dxlinkKeepalive    = 30 * time.Second
 	dxlinkDataChannel  = 1 // channel ID assigned by CHANNEL_REQUEST
 	dxlinkDispatchSize = 64
+
+	// staleQuoteTimeout is the maximum time the market streamer will wait for a
+	// quote before treating the connection as stale and forcing a reconnect.
+	// Only active when at least one symbol is subscribed.
+	staleQuoteTimeout = 90 * time.Second
 )
 
 // QuoteTokenFetcher is the interface the market streamer requires to retrieve
@@ -151,6 +156,64 @@ func (m *marketStreamer) touchLastEvent() {
 	m.lastEventAt = now
 	m.statusMu.Unlock()
 	client.Metrics.LastQuoteTime.Set(float64(now.Unix()))
+}
+
+// isStale reports whether the connection should be considered stale.
+// Returns true when:
+//   - there is at least one subscribed symbol (no point watching idle streams), AND
+//   - lastEventAt is non-zero (at least one quote has been expected), AND
+//   - no quote has been received within staleQuoteTimeout.
+//
+// Exposed as a method so tests can inject arbitrary lastEventAt values without
+// running a real WebSocket.
+func (m *marketStreamer) isStale(now time.Time, timeout time.Duration) bool {
+	if len(m.currentSymbols()) == 0 {
+		return false
+	}
+	m.statusMu.RLock()
+	last := m.lastEventAt
+	m.statusMu.RUnlock()
+	if last.IsZero() {
+		// Connected but no quote ever received — start the clock from connection
+		// time so we don't fire immediately on a freshly-opened stream.
+		m.statusMu.RLock()
+		last = m.connectedSince
+		m.statusMu.RUnlock()
+	}
+	if last.IsZero() {
+		return false
+	}
+	return now.Sub(last) >= timeout
+}
+
+// staleWatchdog polls isStale every checkInterval and cancels connCancel when
+// the connection is detected as stale, causing runOnce to return and the
+// reconnect loop in Start to execute.
+func (m *marketStreamer) staleWatchdog(
+	ctx context.Context,
+	connCancel context.CancelFunc,
+	timeout time.Duration,
+	checkInterval time.Duration,
+	done chan<- struct{},
+) {
+	defer close(done)
+	ticker := time.NewTicker(checkInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if m.isStale(time.Now(), timeout) {
+				m.log.Warn("market streamer: no quote received — forcing reconnect",
+					zap.Duration("stale_after", timeout),
+					zap.Int("subscribed_symbols", len(m.currentSymbols())),
+				)
+				connCancel()
+				return
+			}
+		}
+	}
 }
 
 // currentSymbols returns a snapshot of the current symbol list.
@@ -335,19 +398,32 @@ func (m *marketStreamer) runOnce(ctx context.Context) error {
 		zap.Time("connected_at", connectedAt),
 	)
 
-	// Step 11: start buffered dispatch goroutine.
+	// Step 11: create a per-connection context so the stale watchdog can
+	// cancel this connection without cancelling the outer Start() context.
+	connCtx, connCancel := context.WithCancel(ctx)
+	defer connCancel()
+
+	// Step 12: start buffered dispatch goroutine.
 	dispatchCh := make(chan models.QuoteEvent, dxlinkDispatchSize)
 	dispatchDone := make(chan struct{})
-	go m.dispatchLoop(ctx, dispatchCh, dispatchDone)
+	go m.dispatchLoop(connCtx, dispatchCh, dispatchDone)
 
-	// Step 12: start keepalive goroutine.
-	kaCtx, cancelKA := context.WithCancel(ctx)
+	// Step 13: start keepalive goroutine.
+	kaCtx, cancelKA := context.WithCancel(connCtx)
 	kaDone := make(chan struct{})
 	go m.keepaliveLoop(kaCtx, conn, kaDone)
 
-	// Step 13: receive loop — blocks until connection closes or ctx cancelled.
-	receiveErr := m.receiveLoop(ctx, conn, dispatchCh)
+	// Step 14: start stale-connection watchdog.
+	// Polls every 15 seconds; fires if no quote received for staleQuoteTimeout.
+	// Only active when symbols are subscribed (no-op for idle streams).
+	watchdogDone := make(chan struct{})
+	go m.staleWatchdog(connCtx, connCancel, staleQuoteTimeout, 15*time.Second, watchdogDone)
 
+	// Step 15: receive loop — blocks until connection closes or connCtx cancelled.
+	receiveErr := m.receiveLoop(connCtx, conn, dispatchCh)
+
+	connCancel() // ensure keepalive and watchdog stop
+	<-watchdogDone
 	cancelKA()
 	<-kaDone
 
