@@ -50,11 +50,16 @@ func (e *Exchange) Accounts(ctx context.Context) ([]models.Account, error) {
 		return nil, fmt.Errorf("exchange.Accounts: HTTP %d: %s", resp.StatusCode, data)
 	}
 
-	var env models.ItemsEnvelope[models.Account]
+	var env models.ItemsEnvelope[models.AccountListItem]
 	if err := json.Unmarshal(data, &env); err != nil {
 		return nil, fmt.Errorf("exchange.Accounts: parse: %w", err)
 	}
-	return env.Data.Items, nil
+
+	out := make([]models.Account, 0, len(env.Data.Items))
+	for _, item := range env.Data.Items {
+		out = append(out, item.Account)
+	}
+	return out, nil
 }
 
 // Positions returns all open positions for the given account, fetching all

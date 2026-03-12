@@ -16,13 +16,18 @@ import (
 	"go.uber.org/zap"
 )
 
+var (
+	authKeychainMustGet = keychain.MustGet
+	authKeychainSet     = keychain.Set
+)
+
 // tokenState holds the in-memory token after a successful refresh.
 // The source of truth for refresh_token is always the OS keychain.
 type tokenState struct {
-	mu           sync.RWMutex
-	accessToken  string
-	tokenType    string // read dynamically from /oauth/token — never hardcoded
-	issuedAt     time.Time
+	mu          sync.RWMutex
+	accessToken string
+	tokenType   string // read dynamically from /oauth/token — never hardcoded
+	issuedAt    time.Time
 }
 
 func (t *tokenState) authHeader() string {
@@ -55,18 +60,17 @@ func (c *Client) EnsureToken(ctx context.Context) error {
 // doTokenRefresh exchanges the stored refresh_token for a new access_token.
 // Must be called with c.token.mu held for writing.
 func (c *Client) doTokenRefresh(ctx context.Context) error {
-	refreshToken, err := keychain.MustGet(keychain.KeyRefreshToken)
+	refreshToken, err := authKeychainMustGet(keychain.KeyRefreshToken)
 	if err != nil {
 		return fmt.Errorf("token refresh: cannot load refresh_token from keychain: %w", err)
 	}
-	clientSecret, err := keychain.MustGet(keychain.KeyClientSecret)
+	clientSecret, err := authKeychainMustGet(keychain.KeyClientSecret)
 	if err != nil {
 		return fmt.Errorf("token refresh: cannot load client_secret from keychain: %w", err)
 	}
 
 	body, _ := json.Marshal(map[string]string{
 		"grant_type":    "refresh_token",
-		"client_id":     c.cfg.ClientID,
 		"client_secret": clientSecret,
 		"refresh_token": refreshToken,
 	})
@@ -94,32 +98,35 @@ func (c *Client) doTokenRefresh(ctx context.Context) error {
 		return fmt.Errorf("token refresh: HTTP %d: %s", resp.StatusCode, data)
 	}
 
-	var env models.DataEnvelope[models.TokenResponse]
-	if err := json.Unmarshal(data, &env); err != nil {
+	// /oauth/token returns a flat RFC 6749 response — NOT a DataEnvelope.
+	// Parse directly into TokenResponse (underscore field names).
+	var tok models.TokenResponse
+	if err := json.Unmarshal(data, &tok); err != nil {
 		Metrics.TokenRefreshes.WithLabelValues("fail").Inc()
 		return fmt.Errorf("token refresh: unmarshal: %w", err)
 	}
-
-	tok := env.Data
 	c.token.accessToken = tok.AccessToken
-	c.token.tokenType   = tok.TokenType
-	c.token.issuedAt    = time.Now()
+	c.token.tokenType = tok.TokenType
+	c.token.issuedAt = time.Now()
 
+	persistRefreshedToken(c.log, tok.RefreshToken)
+	return nil
+}
+
+func persistRefreshedToken(log *zap.Logger, newRefreshToken string) {
 	// SAFE: only persist new refresh_token if non-empty.
-	// If the response omits it (network truncation, transient error) we retain
-	// the existing keychain value and log a warning. Do NOT overwrite with "".
-	if tok.RefreshToken != "" {
-		if err := keychain.Set(keychain.KeyRefreshToken, tok.RefreshToken); err != nil {
-			c.log.Warn("keychain write failed — token in memory only",
+	// If the response omits it we retain the existing keychain value.
+	// Do NOT overwrite with "".
+	if newRefreshToken != "" {
+		if err := authKeychainSet(keychain.KeyRefreshToken, newRefreshToken); err != nil {
+			log.Warn("keychain write failed — token in memory only",
 				zap.String("key", keychain.KeyRefreshToken),
 				zap.Error(err))
 		}
 		Metrics.TokenRefreshes.WithLabelValues("ok").Inc()
-	} else {
-		c.log.Warn("refresh_token absent from /oauth/token response — retaining existing keychain token",
-			zap.String("action", "no-overwrite"))
-		Metrics.TokenRefreshes.WithLabelValues("missing_refresh_token").Inc()
+		return
 	}
-
-	return nil
+	log.Warn("refresh_token absent from /oauth/token response — retaining existing keychain token",
+		zap.String("action", "no-overwrite"))
+	Metrics.TokenRefreshes.WithLabelValues("missing_refresh_token").Inc()
 }

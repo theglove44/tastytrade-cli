@@ -14,13 +14,19 @@ import (
 // ── Auth ─────────────────────────────────────────────────────────────────────
 
 // TokenResponse is the /oauth/token response payload.
+//
+// The OAuth 2.0 /oauth/token endpoint returns a flat JSON object with
+// underscore-separated field names — NOT the dashed names used elsewhere in
+// the TastyTrade API, and NOT wrapped in a DataEnvelope {"data": {...}}.
+// This matches the Python SDK (tastytrade-sdk-python) and RFC 6749 §5.1.
+//
 // RefreshToken may be absent on some error paths — callers must check for empty
 // string and retain the existing token rather than overwriting with empty.
 type TokenResponse struct {
-	AccessToken  string `json:"access-token"`
-	TokenType    string `json:"token-type"`   // read dynamically — do not hardcode "Bearer"
-	RefreshToken string `json:"refresh-token"` // may be empty — see note above
-	ExpiresIn    int    `json:"expires-in"`    // seconds, currently 900
+	AccessToken  string `json:"access_token"`
+	TokenType    string `json:"token_type"`    // read dynamically — do not hardcode "Bearer"
+	RefreshToken string `json:"refresh_token"` // may be empty — see note above
+	ExpiresIn    int    `json:"expires_in"`    // seconds, currently 900
 }
 
 // ── Accounts ─────────────────────────────────────────────────────────────────
@@ -40,6 +46,13 @@ type Account struct {
 	IsFirmError   bool   `json:"is-firm-error"`
 }
 
+// AccountListItem is the list-item wrapper returned by GET /customers/me/accounts.
+// The endpoint returns data.items[].account rather than data.items[] being the
+// account object directly.
+type AccountListItem struct {
+	Account Account `json:"account"`
+}
+
 // ── Balances ─────────────────────────────────────────────────────────────────
 
 type Balance struct {
@@ -57,27 +70,27 @@ type Balance struct {
 	MaintenanceCallValue   decimal.Decimal `json:"maintenance-call-value"`
 	RegTMarginRequirement  decimal.Decimal `json:"reg-t-margin-requirement"`
 	DayTradeBuyingPower    decimal.Decimal `json:"day-trade-buying-power"`
-	UpdatedAt              time.Time        `json:"updated-at"`
+	UpdatedAt              time.Time       `json:"updated-at"`
 }
 
 // ── Positions ────────────────────────────────────────────────────────────────
 
 type Position struct {
-	AccountNumber        string          `json:"account-number"`
-	Symbol               string          `json:"symbol"`
-	InstrumentType       string          `json:"instrument-type"` // Equity, Equity Option, Future Option, …
-	UnderlyingSymbol     string          `json:"underlying-symbol"`
-	Quantity             decimal.Decimal `json:"quantity"`
-	QuantityDirection    string          `json:"quantity-direction"` // Long / Short
-	ClosePrice           decimal.Decimal `json:"close-price"`
-	AverageOpenPrice     decimal.Decimal `json:"average-open-price"`
-	AverageYearlyMarket  decimal.Decimal `json:"average-yearly-market-close-price"`
-	MultiplierQuantity   decimal.Decimal `json:"multiplier-quantity"`
-	CostEffect           string          `json:"cost-effect"` // Debit / Credit
-	DayChange            decimal.Decimal `json:"realized-day-gain"`
-	UnrealizedDayChange  decimal.Decimal `json:"unrealized-day-gain"`
-	ExpiresAt            *time.Time       `json:"expires-at,omitempty"`
-	UpdatedAt            time.Time        `json:"updated-at"`
+	AccountNumber       string          `json:"account-number"`
+	Symbol              string          `json:"symbol"`
+	InstrumentType      string          `json:"instrument-type"` // Equity, Equity Option, Future Option, …
+	UnderlyingSymbol    string          `json:"underlying-symbol"`
+	Quantity            decimal.Decimal `json:"quantity"`
+	QuantityDirection   string          `json:"quantity-direction"` // Long / Short
+	ClosePrice          decimal.Decimal `json:"close-price"`
+	AverageOpenPrice    decimal.Decimal `json:"average-open-price"`
+	AverageYearlyMarket decimal.Decimal `json:"average-yearly-market-close-price"`
+	MultiplierQuantity  decimal.Decimal `json:"multiplier-quantity"`
+	CostEffect          string          `json:"cost-effect"` // Debit / Credit
+	DayChange           decimal.Decimal `json:"realized-day-gain"`
+	UnrealizedDayChange decimal.Decimal `json:"unrealized-day-gain"`
+	ExpiresAt           *time.Time      `json:"expires-at,omitempty"`
+	UpdatedAt           time.Time       `json:"updated-at"`
 
 	// Greeks — populated when streamer data is merged.
 	Delta *float64 `json:"-"`
@@ -96,18 +109,18 @@ type OrderLeg struct {
 }
 
 type Order struct {
-	ID              string          `json:"id"`
-	AccountNumber   string          `json:"account-number"`
-	Status          string          `json:"status"` // Received, Routed, Live, Filled, Cancelled, …
-	OrderType       string          `json:"order-type"`
-	TimeInForce     string          `json:"time-in-force"`
-	Price           decimal.Decimal `json:"price"`
-	PriceEffect     string          `json:"price-effect"` // Debit / Credit
-	Legs            []OrderLeg      `json:"legs"`
-	CancelledAt     *time.Time      `json:"cancelled-at,omitempty"`
-	FilledAt        *time.Time      `json:"filled-at,omitempty"`
-	ReceivedAt      time.Time       `json:"received-at"`
-	UpdatedAt       time.Time       `json:"updated-at"`
+	ID            string          `json:"id"`
+	AccountNumber string          `json:"account-number"`
+	Status        string          `json:"status"` // Received, Routed, Live, Filled, Cancelled, …
+	OrderType     string          `json:"order-type"`
+	TimeInForce   string          `json:"time-in-force"`
+	Price         decimal.Decimal `json:"price"`
+	PriceEffect   string          `json:"price-effect"` // Debit / Credit
+	Legs          []OrderLeg      `json:"legs"`
+	CancelledAt   *time.Time      `json:"cancelled-at,omitempty"`
+	FilledAt      *time.Time      `json:"filled-at,omitempty"`
+	ReceivedAt    time.Time       `json:"received-at"`
+	UpdatedAt     time.Time       `json:"updated-at"`
 }
 
 // ── Dry-Run ──────────────────────────────────────────────────────────────────
@@ -119,11 +132,11 @@ type DryRunFee struct {
 }
 
 type DryRunResult struct {
-	Order               Order          `json:"order"`
-	Errors              []DryRunError  `json:"errors,omitempty"`
-	Warnings            []DryRunError  `json:"warnings,omitempty"`
-	BuyingPowerEffect   BPEffect       `json:"buying-power-effect"`
-	FeeCalculation      []DryRunFee    `json:"fee-calculation,omitempty"`
+	Order             Order         `json:"order"`
+	Errors            []DryRunError `json:"errors,omitempty"`
+	Warnings          []DryRunError `json:"warnings,omitempty"`
+	BuyingPowerEffect BPEffect      `json:"buying-power-effect"`
+	FeeCalculation    []DryRunFee   `json:"fee-calculation,omitempty"`
 }
 
 type DryRunError struct {
@@ -132,12 +145,12 @@ type DryRunError struct {
 }
 
 type BPEffect struct {
-	ChangeInMarginRequirement        decimal.Decimal `json:"change-in-margin-requirement"`
-	ChangeInMarginRequirementEffect  string          `json:"change-in-margin-requirement-effect"`
-	ChangeInBuyingPower              decimal.Decimal `json:"change-in-buying-power"`
-	ChangeInBuyingPowerEffect        string          `json:"change-in-buying-power-effect"`
-	CurrentBuyingPower               decimal.Decimal `json:"current-buying-power"`
-	NewBuyingPower                   decimal.Decimal `json:"new-buying-power"`
+	ChangeInMarginRequirement       decimal.Decimal `json:"change-in-margin-requirement"`
+	ChangeInMarginRequirementEffect string          `json:"change-in-margin-requirement-effect"`
+	ChangeInBuyingPower             decimal.Decimal `json:"change-in-buying-power"`
+	ChangeInBuyingPowerEffect       string          `json:"change-in-buying-power-effect"`
+	CurrentBuyingPower              decimal.Decimal `json:"current-buying-power"`
+	NewBuyingPower                  decimal.Decimal `json:"new-buying-power"`
 }
 
 // ── New Order Request ─────────────────────────────────────────────────────────
@@ -152,7 +165,7 @@ type NewOrderLeg struct {
 type NewOrder struct {
 	OrderType   string        `json:"order-type"`
 	TimeInForce string        `json:"time-in-force"`
-	Price       string        `json:"price"`       // string per API convention
+	Price       string        `json:"price"`        // string per API convention
 	PriceEffect string        `json:"price-effect"` // Debit or Credit
 	Legs        []NewOrderLeg `json:"legs"`
 }
@@ -199,16 +212,16 @@ type DXLinkMsg struct {
 // declared in FEED_SETUP's acceptEventFields.
 // Compact format: ["Quote","SPY",450.10,450.11,450.05,1234567890000]
 type DXLinkFeedData struct {
-	Type    string            `json:"type"`    // "FEED_DATA"
+	Type    string            `json:"type"` // "FEED_DATA"
 	Channel int               `json:"channel"`
-	Data    []json.RawMessage `json:"data"`    // array of compact event arrays
+	Data    []json.RawMessage `json:"data"` // array of compact event arrays
 }
 
 // DXLinkAuthState carries the AUTH_STATE response.
 type DXLinkAuthState struct {
-	Type    string `json:"type"`    // "AUTH_STATE"
+	Type    string `json:"type"` // "AUTH_STATE"
 	Channel int    `json:"channel"`
-	State   string `json:"state"`   // "AUTHORIZED" | "UNAUTHORIZED"
+	State   string `json:"state"` // "AUTHORIZED" | "UNAUTHORIZED"
 }
 
 // DXLinkChannelOpened carries the CHANNEL_OPENED response.
@@ -236,10 +249,10 @@ type ItemsEnvelope[T any] struct {
 }
 
 type Pager struct {
-	PageOffset    int `json:"page-offset"`
-	PerPage       int `json:"per-page"`
-	TotalPages    int `json:"total-pages"`
-	TotalItems    int `json:"total-items"`
+	PageOffset       int `json:"page-offset"`
+	PerPage          int `json:"per-page"`
+	TotalPages       int `json:"total-pages"`
+	TotalItems       int `json:"total-items"`
 	CurrentItemCount int `json:"current-item-count"`
 }
 
@@ -316,11 +329,11 @@ type PositionEvent struct {
 // otherwise last price. If all three are zero the quote is considered stale
 // and MarkStale will be true.
 type QuoteEvent struct {
-	Symbol     string          `json:"eventSymbol"`
-	BidPrice   decimal.Decimal `json:"bidPrice"`
-	AskPrice   decimal.Decimal `json:"askPrice"`
-	LastPrice  decimal.Decimal `json:"lastPrice"`
-	MarkPrice  decimal.Decimal `json:"markPrice"`  // derived — see above
-	MarkStale  bool            `json:"markStale"`  // true when mark cannot be determined
-	EventTime  time.Time       `json:"time"`
+	Symbol    string          `json:"eventSymbol"`
+	BidPrice  decimal.Decimal `json:"bidPrice"`
+	AskPrice  decimal.Decimal `json:"askPrice"`
+	LastPrice decimal.Decimal `json:"lastPrice"`
+	MarkPrice decimal.Decimal `json:"markPrice"` // derived — see above
+	MarkStale bool            `json:"markStale"` // true when mark cannot be determined
+	EventTime time.Time       `json:"time"`
 }

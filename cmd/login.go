@@ -37,6 +37,31 @@ They are never written to disk or environment variables.`,
 	},
 }
 
+var loginKeychainSet = keychain.Set
+
+func persistLoginCredentials(clientID, clientSecret, enteredRefreshToken string, tok models.TokenResponse) error {
+	for key, value := range map[string]string{
+		keychain.KeyClientSecret: clientSecret,
+		keychain.KeyAccessToken:  tok.AccessToken,
+		keychain.KeyTokenType:    tok.TokenType,
+		"client_id":              clientID,
+	} {
+		if err := loginKeychainSet(key, value); err != nil {
+			return fmt.Errorf("keychain store %q: %w", key, err)
+		}
+	}
+
+	refreshToStore := tok.RefreshToken
+	if refreshToStore == "" {
+		refreshToStore = enteredRefreshToken
+		fmt.Println("WARNING: refresh_token absent from login response — storing the refresh token entered at login.")
+	}
+	if err := loginKeychainSet(keychain.KeyRefreshToken, refreshToStore); err != nil {
+		return fmt.Errorf("keychain store %q: %w", keychain.KeyRefreshToken, err)
+	}
+	return nil
+}
+
 func runLogin(ctx context.Context) error {
 	r := bufio.NewReader(os.Stdin)
 	readLine := func(prompt string) (string, error) {
@@ -70,8 +95,33 @@ func runLogin(ctx context.Context) error {
 	// We do not call config.Load() here because TASTYTRADE_CLIENT_ID is not yet
 	// stored — the user is providing it interactively right now.
 	baseURL := os.Getenv("TASTYTRADE_BASE_URL")
-	if baseURL == "" {
-		baseURL = config.SandboxBaseURL
+	switch baseURL {
+	case "":
+		// No environment variable set. Require an explicit choice to prevent
+		// sending production refresh tokens to the cert/sandbox endpoint,
+		// which causes "invalid_grant / Grant revoked" errors.
+		fmt.Println("TASTYTRADE_BASE_URL is not set.")
+		fmt.Printf("  Production: %s\n", config.ProdBaseURL)
+		fmt.Printf("  Sandbox:    %s\n", config.SandboxBaseURL)
+		env, err := readLine("Environment [prod/sandbox]: ")
+		if err != nil {
+			return fmt.Errorf("environment selection: %w", err)
+		}
+		switch strings.ToLower(strings.TrimSpace(env)) {
+		case "prod", "production":
+			baseURL = config.ProdBaseURL
+		case "sandbox", "cert":
+			baseURL = config.SandboxBaseURL
+		default:
+			return fmt.Errorf("unknown environment %q — use 'prod' or 'sandbox', or set TASTYTRADE_BASE_URL", env)
+		}
+	case config.ProdBaseURL:
+		// explicit prod — accepted silently
+	case config.SandboxBaseURL:
+		// explicit sandbox — accepted silently
+	default:
+		// Custom URL — accept as-is, log clearly so the user knows what they're hitting.
+		fmt.Printf("Using custom base URL: %s\n", baseURL)
 	}
 	userAgent := os.Getenv("TASTYTRADE_USER_AGENT")
 	if userAgent == "" {
@@ -94,7 +144,6 @@ func runLogin(ctx context.Context) error {
 
 	body, _ := json.Marshal(map[string]string{
 		"grant_type":    "refresh_token",
-		"client_id":     clientID,
 		"client_secret": clientSecret,
 		"refresh_token": refreshToken,
 	})
@@ -118,35 +167,17 @@ func runLogin(ctx context.Context) error {
 		return fmt.Errorf("token exchange failed (HTTP %d): %s", resp.StatusCode, data)
 	}
 
-	var env models.DataEnvelope[models.TokenResponse]
-	if err := json.Unmarshal(data, &env); err != nil {
+	// /oauth/token returns a flat RFC 6749 response — NOT a DataEnvelope.
+	var tok models.TokenResponse
+	if err := json.Unmarshal(data, &tok); err != nil {
 		return fmt.Errorf("parse token response: %w", err)
 	}
-	tok := env.Data
 	if tok.AccessToken == "" {
 		return fmt.Errorf("token exchange succeeded but access_token is empty — unexpected response")
 	}
 
-	// Persist credentials to OS keychain individually so each can be guarded.
-	for key, value := range map[string]string{
-		keychain.KeyClientSecret: clientSecret,
-		keychain.KeyAccessToken:  tok.AccessToken,
-		keychain.KeyTokenType:    tok.TokenType,
-		"client_id":              clientID,
-	} {
-		if err := keychain.Set(key, value); err != nil {
-			return fmt.Errorf("keychain store %q: %w", key, err)
-		}
-	}
-
-	// SAFE: only store refresh_token if non-empty.
-	if tok.RefreshToken != "" {
-		if err := keychain.Set(keychain.KeyRefreshToken, tok.RefreshToken); err != nil {
-			return fmt.Errorf("keychain store %q: %w", keychain.KeyRefreshToken, err)
-		}
-	} else {
-		fmt.Println("WARNING: refresh_token absent from login response — not stored.")
-		fmt.Println("         If no token exists in the keychain, re-run 'tt login'.")
+	if err := persistLoginCredentials(clientID, clientSecret, refreshToken, tok); err != nil {
+		return err
 	}
 
 	fmt.Printf("✓ Credentials stored. token_type=%s expires_in=%ds\n",

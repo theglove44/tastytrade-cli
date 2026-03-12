@@ -22,6 +22,7 @@ const (
 	ProdBaseURL    = "https://api.tastytrade.com"
 	SandboxBaseURL = "https://api.cert.tastyworks.com" // NOTE: tastyworks.com domain, not tastytrade.com
 
+	DefaultAccountID   = "5WW46136"
 	AccountStreamerURL = "wss://streamer.tastytrade.com"
 	DXLinkBaseURL      = "wss://tasty-openapi-ws.dxfeed.com/realtime" // may be overridden by /api-quote-tokens response
 )
@@ -79,7 +80,10 @@ type Config struct {
 func Load() (*Config, error) {
 	baseURL := os.Getenv("TASTYTRADE_BASE_URL")
 	if baseURL == "" {
-		baseURL = SandboxBaseURL
+		// Default to production. Sending a production refresh_token to the cert
+		// endpoint causes "invalid_grant / Grant revoked". If sandbox is needed,
+		// set TASTYTRADE_BASE_URL=https://api.cert.tastyworks.com explicitly.
+		baseURL = ProdBaseURL
 	}
 
 	clientID := os.Getenv("TASTYTRADE_CLIENT_ID")
@@ -121,7 +125,7 @@ func Load() (*Config, error) {
 
 	return &Config{
 		BaseURL:            baseURL,
-		AccountID:          os.Getenv("TASTYTRADE_ACCOUNT_ID"),
+		AccountID:          envOr("TASTYTRADE_ACCOUNT_ID", DefaultAccountID),
 		ClientID:           clientID,
 		UserAgent:          userAgent,
 		APIVersion:         apiVersion,
