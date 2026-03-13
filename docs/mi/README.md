@@ -55,3 +55,5 @@ Examples:
   - compact tt watch heartbeat combining streamer and reconciler runtime health
 - `MI-2026-03-13-last-quote-metric-stuck-at-zero.md`
   - investigation and fix for live quote metric staying at zero due to DXLink symbol format mismatch
+- `MI-2026-03-13-phase3a-reconcile-outcome-policy.md`
+  - conservative operational handling policy for reconciler outcomes and watch heartbeat policy state

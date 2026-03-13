@@ -50,6 +50,12 @@ func TestCurrentWatchHeartbeat_StartupPartialState(t *testing.T) {
 	if view.ReconcileLastRunAt != "n/a" {
 		t.Fatalf("reconcile_last_run_at = %q, want n/a", view.ReconcileLastRunAt)
 	}
+	if view.ReconcilePolicy != "not_yet_available" {
+		t.Fatalf("reconcile policy = %q, want not_yet_available", view.ReconcilePolicy)
+	}
+	if view.SuppressConfidenceActions {
+		t.Fatal("SuppressConfidenceActions = true before any reconcile run")
+	}
 }
 
 func TestCurrentWatchHeartbeat_Healthy(t *testing.T) {
@@ -67,6 +73,12 @@ func TestCurrentWatchHeartbeat_Healthy(t *testing.T) {
 	}
 	if view.TrackedSymbols != 4 || view.OpenPositions != 4 {
 		t.Fatalf("metric counts = %d/%d, want 4/4", view.TrackedSymbols, view.OpenPositions)
+	}
+	if view.ReconcilePolicy != "observe" {
+		t.Fatalf("ReconcilePolicy = %q, want observe", view.ReconcilePolicy)
+	}
+	if view.SuppressConfidenceActions {
+		t.Fatal("SuppressConfidenceActions = true, want false")
 	}
 }
 
@@ -92,6 +104,36 @@ func TestLogWatchHeartbeat_DriftDegraded(t *testing.T) {
 	if ctx["reconcile_mismatches"] != int64(2) {
 		t.Fatalf("reconcile_mismatches = %v, want 2", ctx["reconcile_mismatches"])
 	}
+	if ctx["reconcile_policy"] != "observe" {
+		t.Fatalf("reconcile_policy = %v, want observe", ctx["reconcile_policy"])
+	}
+	if ctx["suppress_confidence_actions"] != false {
+		t.Fatalf("suppress_confidence_actions = %v, want false", ctx["suppress_confidence_actions"])
+	}
+}
+
+func TestLogWatchHeartbeat_PartialState(t *testing.T) {
+	setHeartbeatGauges(5, 4)
+	log, logs := observedWatchLogger(zapcore.InfoLevel)
+	logWatchHeartbeat(log,
+		&stubStreamer{status: streamer.StreamerStatus{Name: "account", Connected: true}},
+		&stubStreamer{status: streamer.StreamerStatus{Name: "market", Connected: true}},
+		&stubReconciler{ok: true, latest: reconciler.Result{RunAt: time.Now().UTC(), Status: reconciler.StatusPartial, ErrorText: "snapshot_write_failed"}},
+	)
+	entries := logs.FilterMessage("tt watch heartbeat").All()
+	if len(entries) != 1 {
+		t.Fatalf("log count = %d, want 1", len(entries))
+	}
+	ctx := entries[0].ContextMap()
+	if ctx["reconcile_policy"] != "observe" {
+		t.Fatalf("reconcile_policy = %v, want observe", ctx["reconcile_policy"])
+	}
+	if ctx["degraded"] != true {
+		t.Fatalf("degraded = %v, want true", ctx["degraded"])
+	}
+	if ctx["suppress_confidence_actions"] != false {
+		t.Fatalf("suppress_confidence_actions = %v, want false", ctx["suppress_confidence_actions"])
+	}
 }
 
 func TestLogWatchHeartbeat_ErrorState(t *testing.T) {
@@ -115,6 +157,12 @@ func TestLogWatchHeartbeat_ErrorState(t *testing.T) {
 	}
 	if ctx["reason"] != "market,reconcile_error" {
 		t.Fatalf("reason = %v, want market,reconcile_error", ctx["reason"])
+	}
+	if ctx["reconcile_policy"] != "suppress" {
+		t.Fatalf("reconcile_policy = %v, want suppress", ctx["reconcile_policy"])
+	}
+	if ctx["suppress_confidence_actions"] != true {
+		t.Fatalf("suppress_confidence_actions = %v, want true", ctx["suppress_confidence_actions"])
 	}
 }
 

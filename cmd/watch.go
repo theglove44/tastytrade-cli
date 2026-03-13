@@ -87,15 +87,17 @@ type watchReconcileStatusView struct {
 }
 
 type watchHeartbeatView struct {
-	AccountStatus       string
-	MarketStatus        string
-	ReconcileStatus     string
-	ReconcileLastRunAt  string
-	ReconcileMismatches int
-	TrackedSymbols      int
-	OpenPositions       int
-	Degraded            bool
-	Reason              string
+	AccountStatus             string
+	MarketStatus              string
+	ReconcileStatus           string
+	ReconcilePolicy           string
+	SuppressConfidenceActions bool
+	ReconcileLastRunAt        string
+	ReconcileMismatches       int
+	TrackedSymbols            int
+	OpenPositions             int
+	Degraded                  bool
+	Reason                    string
 }
 
 func currentWatchReconcileStatus(rec reconciler.Reconciler) watchReconcileStatusView {
@@ -127,13 +129,20 @@ func currentWatchHeartbeat(acct streamer.Streamer, mkt streamer.Streamer, rec re
 		AccountStatus:       streamerHealth(acct),
 		MarketStatus:        streamerHealth(mkt),
 		ReconcileStatus:     recView.Status,
+		ReconcilePolicy:     "not_yet_available",
 		ReconcileLastRunAt:  "n/a",
 		ReconcileMismatches: recView.MismatchCount,
 		TrackedSymbols:      metricGaugeInt(client.Metrics.TrackedSymbols),
 		OpenPositions:       metricGaugeInt(client.Metrics.OpenPositions),
 	}
 	if recView.Available {
+		policy := reconciler.PolicyForResult(reconciler.Result{Status: reconciler.Status(recView.Status)})
+		view.ReconcilePolicy = string(policy.Handling)
+		view.SuppressConfidenceActions = policy.SuppressConfidenceActions
 		view.ReconcileLastRunAt = recView.RunAt.Format(time.RFC3339)
+		if policy.Degraded {
+			view.Degraded = true
+		}
 	}
 
 	var reasons []string
@@ -164,6 +173,8 @@ func logWatchHeartbeat(log *zap.Logger, acct streamer.Streamer, mkt streamer.Str
 		zap.String("account", view.AccountStatus),
 		zap.String("market", view.MarketStatus),
 		zap.String("reconcile", view.ReconcileStatus),
+		zap.String("reconcile_policy", view.ReconcilePolicy),
+		zap.Bool("suppress_confidence_actions", view.SuppressConfidenceActions),
 		zap.String("reconcile_last_run_at", view.ReconcileLastRunAt),
 		zap.Int("reconcile_mismatches", view.ReconcileMismatches),
 		zap.Int("tracked_symbols", view.TrackedSymbols),
@@ -187,7 +198,11 @@ func logWatchReconcileStatus(log *zap.Logger, rec reconciler.Reconciler) {
 		zap.String("reconcile_status", view.Status),
 	}
 	if view.Available {
+		policy := reconciler.PolicyForResult(reconciler.Result{Status: reconciler.Status(view.Status)})
 		fields = append(fields,
+			zap.String("reconcile_policy", string(policy.Handling)),
+			zap.Bool("reconcile_degraded", policy.Degraded),
+			zap.Bool("suppress_confidence_actions", policy.SuppressConfidenceActions),
 			zap.Time("reconcile_last_run_at", view.RunAt),
 			zap.Duration("reconcile_duration", view.Duration),
 			zap.Int("reconcile_positions_checked", view.PositionsChecked),

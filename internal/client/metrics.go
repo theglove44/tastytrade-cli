@@ -72,14 +72,17 @@ type metrics struct {
 	BusDroppedEvents *prometheus.CounterVec
 
 	// Reconciler observability (Phase 3A)
-	ReconcileRunsTotal           prometheus.Counter
-	ReconcileErrorsTotal         prometheus.Counter
-	ReconcilePositionsCorrected  prometheus.Counter
-	ReconcileRunsByStatus        *prometheus.CounterVec
-	ReconcileErrorsByType        *prometheus.CounterVec
-	ReconcileLastStatus          *prometheus.GaugeVec
-	ReconcileLastDurationSeconds prometheus.Gauge
-	ReconcileLastMismatchCount   prometheus.Gauge
+	ReconcileRunsTotal                prometheus.Counter
+	ReconcileErrorsTotal              prometheus.Counter
+	ReconcilePositionsCorrected       prometheus.Counter
+	ReconcileRunsByStatus             *prometheus.CounterVec
+	ReconcileErrorsByType             *prometheus.CounterVec
+	ReconcileLastStatus               *prometheus.GaugeVec
+	ReconcileLastDurationSeconds      prometheus.Gauge
+	ReconcileLastMismatchCount        prometheus.Gauge
+	ReconcilePolicyMode               *prometheus.GaugeVec
+	ReconcilePolicyDegraded           prometheus.Gauge
+	ReconcilePolicySuppressConfidence prometheus.Gauge
 }
 
 func newMetrics() *metrics {
@@ -202,6 +205,18 @@ func newMetrics() *metrics {
 		ReconcileLastMismatchCount: promauto.NewGauge(prometheus.GaugeOpts{
 			Name: "tastytrade_reconcile_last_mismatch_count",
 			Help: "Mismatch count from the latest reconciliation pass.",
+		}),
+		ReconcilePolicyMode: promauto.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "tastytrade_reconcile_policy_mode",
+			Help: "One-hot gauge for the current reconciler operational handling mode.",
+		}, []string{"mode"}),
+		ReconcilePolicyDegraded: promauto.NewGauge(prometheus.GaugeOpts{
+			Name: "tastytrade_reconcile_policy_degraded",
+			Help: "1 when reconciler policy currently considers runtime degraded, else 0.",
+		}),
+		ReconcilePolicySuppressConfidence: promauto.NewGauge(prometheus.GaugeOpts{
+			Name: "tastytrade_reconcile_policy_suppress_confidence_actions",
+			Help: "1 when reconciler policy currently suppresses confidence-dependent actions, else 0.",
 		}),
 	}
 }

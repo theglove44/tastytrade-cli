@@ -146,6 +146,34 @@ func (s *mockStore) ActivePositionSymbols(_ context.Context, _ string) ([]string
 }
 func (s *mockStore) Close() error { return nil }
 
+func TestPolicyForResult_OK(t *testing.T) {
+	p := reconciler.PolicyForResult(reconciler.Result{Status: reconciler.StatusOK})
+	if p.Severity != reconciler.SeverityInfo || p.Degraded || !p.ObserveOnly || p.RecoveryAllowed || p.SuppressConfidenceActions || p.Handling != reconciler.HandlingObserve {
+		t.Fatalf("policy = %+v, want ok/observe", p)
+	}
+}
+
+func TestPolicyForResult_DriftDetected(t *testing.T) {
+	p := reconciler.PolicyForResult(reconciler.Result{Status: reconciler.StatusDriftDetected})
+	if p.Severity != reconciler.SeverityWarn || !p.Degraded || !p.ObserveOnly || p.RecoveryAllowed || p.SuppressConfidenceActions || p.Handling != reconciler.HandlingObserve {
+		t.Fatalf("policy = %+v, want drift/degraded/observe", p)
+	}
+}
+
+func TestPolicyForResult_Partial(t *testing.T) {
+	p := reconciler.PolicyForResult(reconciler.Result{Status: reconciler.StatusPartial})
+	if p.Severity != reconciler.SeverityWarn || !p.Degraded || !p.ObserveOnly || p.RecoveryAllowed || p.SuppressConfidenceActions || p.Handling != reconciler.HandlingObserve {
+		t.Fatalf("policy = %+v, want partial/degraded/observe", p)
+	}
+}
+
+func TestPolicyForResult_Error(t *testing.T) {
+	p := reconciler.PolicyForResult(reconciler.Result{Status: reconciler.StatusError})
+	if p.Severity != reconciler.SeverityError || !p.Degraded || p.ObserveOnly || p.RecoveryAllowed || !p.SuppressConfidenceActions || p.Handling != reconciler.HandlingSuppress {
+		t.Fatalf("policy = %+v, want error/degraded/suppress", p)
+	}
+}
+
 func TestReconciler_LatestResult_NoRunYet(t *testing.T) {
 	book := newBook()
 	ex := &mockExchange{}

@@ -89,6 +89,85 @@ type Result struct {
 	Mismatches         []Mismatch     `json:"mismatches,omitempty"`
 }
 
+// HandlingMode is the operational handling policy derived from a reconcile result.
+type HandlingMode string
+
+const (
+	HandlingObserve         HandlingMode = "observe"
+	HandlingLimitedRecovery HandlingMode = "limited_recovery"
+	HandlingSuppress        HandlingMode = "suppress"
+)
+
+// Severity is the compact operational severity assigned to a reconcile outcome.
+type Severity string
+
+const (
+	SeverityInfo  Severity = "info"
+	SeverityWarn  Severity = "warn"
+	SeverityError Severity = "error"
+)
+
+// OutcomePolicy maps a reconcile result to a conservative operational handling state.
+type OutcomePolicy struct {
+	Severity                  Severity     `json:"severity"`
+	Degraded                  bool         `json:"degraded"`
+	ObserveOnly               bool         `json:"observe_only"`
+	RecoveryAllowed           bool         `json:"recovery_allowed"`
+	SuppressConfidenceActions bool         `json:"suppress_confidence_actions"`
+	Handling                  HandlingMode `json:"handling"`
+}
+
+// PolicyForResult converts a reconcile result into an explicit operational handling policy.
+func PolicyForResult(result Result) OutcomePolicy {
+	switch result.Status {
+	case StatusOK:
+		return OutcomePolicy{
+			Severity:                  SeverityInfo,
+			Degraded:                  false,
+			ObserveOnly:               true,
+			RecoveryAllowed:           false,
+			SuppressConfidenceActions: false,
+			Handling:                  HandlingObserve,
+		}
+	case StatusDriftDetected:
+		return OutcomePolicy{
+			Severity:                  SeverityWarn,
+			Degraded:                  true,
+			ObserveOnly:               true,
+			RecoveryAllowed:           false,
+			SuppressConfidenceActions: false,
+			Handling:                  HandlingObserve,
+		}
+	case StatusPartial:
+		return OutcomePolicy{
+			Severity:                  SeverityWarn,
+			Degraded:                  true,
+			ObserveOnly:               true,
+			RecoveryAllowed:           false,
+			SuppressConfidenceActions: false,
+			Handling:                  HandlingObserve,
+		}
+	case StatusError:
+		return OutcomePolicy{
+			Severity:                  SeverityError,
+			Degraded:                  true,
+			ObserveOnly:               false,
+			RecoveryAllowed:           false,
+			SuppressConfidenceActions: true,
+			Handling:                  HandlingSuppress,
+		}
+	default:
+		return OutcomePolicy{
+			Severity:                  SeverityWarn,
+			Degraded:                  true,
+			ObserveOnly:               true,
+			RecoveryAllowed:           false,
+			SuppressConfidenceActions: false,
+			Handling:                  HandlingObserve,
+		}
+	}
+}
+
 func (r *Result) addMismatch(symbol, category, action string) {
 	r.MismatchCount++
 	r.MismatchCategories[category]++
@@ -222,8 +301,12 @@ func (r *reconciler) runOnce(ctx context.Context) Result {
 		client.Metrics.ReconcileErrorsTotal.Inc()
 		r.setLatestResult(result)
 		r.recordMetrics(result)
+		policy := PolicyForResult(result)
 		r.log.Warn("reconciler: pass complete",
 			zap.String("status", string(result.Status)),
+			zap.String("policy", string(policy.Handling)),
+			zap.Bool("degraded", policy.Degraded),
+			zap.Bool("suppress_confidence_actions", policy.SuppressConfidenceActions),
 			zap.String("account", r.accountID),
 			zap.Int("positions_checked", result.PositionsChecked),
 			zap.Int("symbols_checked", result.SymbolsChecked),
@@ -340,8 +423,12 @@ func (r *reconciler) runOnce(ctx context.Context) Result {
 
 	r.setLatestResult(result)
 	r.recordMetrics(result)
+	policy := PolicyForResult(result)
 	r.log.Info("reconciler: pass complete",
 		zap.String("status", string(result.Status)),
+		zap.String("policy", string(policy.Handling)),
+		zap.Bool("degraded", policy.Degraded),
+		zap.Bool("suppress_confidence_actions", policy.SuppressConfidenceActions),
 		zap.String("account", r.accountID),
 		zap.Int("positions_checked", result.PositionsChecked),
 		zap.Int("symbols_checked", result.SymbolsChecked),
@@ -371,6 +458,24 @@ func (r *reconciler) recordMetrics(result Result) {
 	}
 	client.Metrics.ReconcileLastDurationSeconds.Set(result.Duration.Seconds())
 	client.Metrics.ReconcileLastMismatchCount.Set(float64(result.MismatchCount))
+	policy := PolicyForResult(result)
+	client.Metrics.ReconcilePolicyMode.WithLabelValues(string(policy.Handling)).Set(1)
+	for _, mode := range []HandlingMode{HandlingObserve, HandlingLimitedRecovery, HandlingSuppress} {
+		if mode == policy.Handling {
+			continue
+		}
+		client.Metrics.ReconcilePolicyMode.WithLabelValues(string(mode)).Set(0)
+	}
+	if policy.Degraded {
+		client.Metrics.ReconcilePolicyDegraded.Set(1)
+	} else {
+		client.Metrics.ReconcilePolicyDegraded.Set(0)
+	}
+	if policy.SuppressConfidenceActions {
+		client.Metrics.ReconcilePolicySuppressConfidence.Set(1)
+	} else {
+		client.Metrics.ReconcilePolicySuppressConfidence.Set(0)
+	}
 	if result.ErrorText != "" {
 		client.Metrics.ReconcileErrorsByType.WithLabelValues(result.ErrorText).Inc()
 	}
