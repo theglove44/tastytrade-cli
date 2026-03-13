@@ -46,12 +46,15 @@ import (
 )
 
 var (
-	cfg    *config.Config
-	cl     *client.Client
-	ex     exchange.Exchange
-	st     store.Store
-	book   *valuation.MarkBook
-	logger *zap.Logger
+	cfg         *config.Config
+	cl          *client.Client
+	ex          exchange.Exchange
+	rec         reconciler.Reconciler
+	acctRuntime streamer.Streamer
+	mktRuntime  streamer.MarketStreamer
+	st          store.Store
+	book        *valuation.MarkBook
+	logger      *zap.Logger
 
 	flagJSON       bool
 	flagVerbose    bool
@@ -89,6 +92,9 @@ All credentials are stored in the OS keychain. Run 'tt login' first.`,
 		}
 		cl = client.New(cfg, logger)
 		ex = ttexchange.New(cl, cfg.BaseURL)
+		rec = nil
+		acctRuntime = nil
+		mktRuntime = nil
 		book = valuation.NewMarkBook()
 
 		metricsAddr := metrics.Addr(logger)
@@ -150,6 +156,7 @@ All credentials are stored in the OS keychain. Run 'tt login' first.`,
 			quoteHandler,
 			logger,
 		)
+		mktRuntime = mktStreamer
 
 		go func() {
 			if serr := mktStreamer.Start(cmd.Context()); serr != nil {
@@ -177,7 +184,7 @@ All credentials are stored in the OS keychain. Run 'tt login' first.`,
 		// ctx is cancelled (the same context that stops the streamers).
 		if cfg.AccountID != "" {
 			wg.Add(1)
-			rec := reconciler.New(
+			rec = reconciler.New(
 				ex,
 				st,
 				book,
@@ -223,6 +230,7 @@ All credentials are stored in the OS keychain. Run 'tt login' first.`,
 				acctPublisher,
 				logger,
 			)
+			acctRuntime = acctStreamer
 			go func() {
 				if serr := acctStreamer.Start(cmd.Context()); serr != nil {
 					logger.Info("account streamer exited", zap.Error(serr))

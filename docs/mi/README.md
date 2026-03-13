@@ -47,3 +47,9 @@ Examples:
   - closed-market stale-watchdog churn fix and startup open-positions metric correction
 - `MI-2026-03-13-phase3a-reconciler-result-model.md`
   - structured reconciler run result model, status metrics, and summary logging
+- `MI-2026-03-13-phase3a-reconciler-latest-status-surface.md`
+  - lightweight in-memory latest-result status surface for reconciler runs
+- `MI-2026-03-13-phase3a-watch-reconciler-status-output.md`
+  - tt watch status output now surfaces the latest reconciler snapshot
+- `MI-2026-03-13-phase3a-watch-operational-heartbeat.md`
+  - compact tt watch heartbeat combining streamer and reconciler runtime health

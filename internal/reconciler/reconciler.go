@@ -36,6 +36,7 @@ package reconciler
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/shopspring/decimal"
@@ -53,6 +54,7 @@ import (
 // Start() blocks until ctx is cancelled.
 type Reconciler interface {
 	Start(ctx context.Context)
+	LatestResult() (Result, bool)
 }
 
 // Status is the structured outcome of a reconciliation pass.
@@ -129,6 +131,9 @@ type reconciler struct {
 	// been absent. Keyed by symbol string. Cleared on next appearance.
 	// Only accessed from the single goroutine running runOnce, so no mutex.
 	absenceCounts map[string]int
+
+	latestMu     sync.RWMutex
+	latestResult *Result
 }
 
 // New creates a Reconciler.
@@ -182,6 +187,16 @@ func (r *reconciler) Start(ctx context.Context) {
 	}
 }
 
+// LatestResult returns the latest completed reconciliation result.
+func (r *reconciler) LatestResult() (Result, bool) {
+	r.latestMu.RLock()
+	defer r.latestMu.RUnlock()
+	if r.latestResult == nil {
+		return Result{}, false
+	}
+	return cloneResult(*r.latestResult), true
+}
+
 // runOnce executes a single reconciliation pass.
 // It is exported via the test-only helper RunOnceForTest to allow direct
 // invocation in tests without waiting for the ticker.
@@ -205,6 +220,7 @@ func (r *reconciler) runOnce(ctx context.Context) Result {
 		result.ErrorText = err.Error()
 		result.Duration = time.Since(startedAt)
 		client.Metrics.ReconcileErrorsTotal.Inc()
+		r.setLatestResult(result)
 		r.recordMetrics(result)
 		r.log.Warn("reconciler: pass complete",
 			zap.String("status", string(result.Status)),
@@ -322,6 +338,7 @@ func (r *reconciler) runOnce(ctx context.Context) Result {
 		result.Action = "snapshot_write_degraded"
 	}
 
+	r.setLatestResult(result)
 	r.recordMetrics(result)
 	r.log.Info("reconciler: pass complete",
 		zap.String("status", string(result.Status)),
@@ -334,6 +351,13 @@ func (r *reconciler) runOnce(ctx context.Context) Result {
 		zap.Duration("duration", result.Duration),
 	)
 	return result
+}
+
+func (r *reconciler) setLatestResult(result Result) {
+	copyResult := cloneResult(result)
+	r.latestMu.Lock()
+	defer r.latestMu.Unlock()
+	r.latestResult = &copyResult
 }
 
 func (r *reconciler) recordMetrics(result Result) {
@@ -395,6 +419,20 @@ func maxInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func cloneResult(in Result) Result {
+	out := in
+	if in.MismatchCategories != nil {
+		out.MismatchCategories = make(map[string]int, len(in.MismatchCategories))
+		for k, v := range in.MismatchCategories {
+			out.MismatchCategories[k] = v
+		}
+	}
+	if in.Mismatches != nil {
+		out.Mismatches = append([]Mismatch(nil), in.Mismatches...)
+	}
+	return out
 }
 
 // RunOnceForTest exposes runOnce for direct invocation in tests.

@@ -146,6 +146,16 @@ func (s *mockStore) ActivePositionSymbols(_ context.Context, _ string) ([]string
 }
 func (s *mockStore) Close() error { return nil }
 
+func TestReconciler_LatestResult_NoRunYet(t *testing.T) {
+	book := newBook()
+	ex := &mockExchange{}
+	r := reconciler.New(ex, nil, book, "TEST123", tightConfig(), silentLogger())
+
+	if _, ok := r.LatestResult(); ok {
+		t.Fatal("LatestResult reported available before any run")
+	}
+}
+
 func TestReconciler_RunOnce_HealthyResult(t *testing.T) {
 	book := newBook()
 	book.LoadPosition("SPY", "TEST123", "10", "Long", dec("450.00"))
@@ -178,6 +188,13 @@ func TestReconciler_RunOnce_HealthyResult(t *testing.T) {
 	entries := logs.FilterMessage("reconciler: pass complete").All()
 	if len(entries) != 1 {
 		t.Fatalf("summary log count = %d, want 1", len(entries))
+	}
+	latest, ok := r.LatestResult()
+	if !ok {
+		t.Fatal("LatestResult unavailable after healthy run")
+	}
+	if latest.Status != reconciler.StatusOK || latest.MismatchCount != 0 || latest.PositionsChecked != 1 {
+		t.Fatalf("LatestResult = %+v, want healthy snapshot", latest)
 	}
 }
 
@@ -220,6 +237,13 @@ func TestReconciler_RunOnce_DriftDetectedResult(t *testing.T) {
 	if len(logs.FilterMessage("reconciler: mismatch detected").All()) == 0 {
 		t.Fatal("expected mismatch detail debug log")
 	}
+	latest, ok := r.LatestResult()
+	if !ok {
+		t.Fatal("LatestResult unavailable after drift run")
+	}
+	if latest.Status != reconciler.StatusDriftDetected || latest.MismatchCategories["avg_open_drift"] != 1 {
+		t.Fatalf("LatestResult = %+v, want drift snapshot", latest)
+	}
 }
 
 func TestReconciler_RunOnce_ErrorResult(t *testing.T) {
@@ -252,6 +276,13 @@ func TestReconciler_RunOnce_ErrorResult(t *testing.T) {
 	entries := logs.FilterMessage("reconciler: pass complete").All()
 	if len(entries) != 1 || entries[0].Level != zapcore.WarnLevel {
 		t.Fatal("expected single warn summary log for error path")
+	}
+	latest, ok := r.LatestResult()
+	if !ok {
+		t.Fatal("LatestResult unavailable after error run")
+	}
+	if latest.Status != reconciler.StatusError || latest.ErrorText != "simulated REST timeout" {
+		t.Fatalf("LatestResult = %+v, want error snapshot", latest)
 	}
 }
 
