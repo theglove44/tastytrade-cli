@@ -377,7 +377,14 @@ func positionConsumer(
 				decimal.Zero,
 			)
 			if mktStreamer != nil {
-				mktStreamer.Subscribe(ev.Symbol)
+				marketSymbol := normalizeMarketDataSymbol(ev.Symbol, ev.InstrumentType)
+				mktStreamer.Subscribe(marketSymbol)
+				if marketSymbol != ev.Symbol && log.Core().Enabled(zap.DebugLevel) {
+					log.Debug("position symbol normalized for market data",
+						zap.String("symbol", ev.Symbol),
+						zap.String("market_symbol", marketSymbol),
+					)
+				}
 			}
 			if ev.Action == "Open" {
 				client.Metrics.OpenPositions.Inc()
@@ -459,7 +466,7 @@ func seedMarkBookFromREST(
 			p.QuantityDirection,
 			avgOpen,
 		)
-		syms = append(syms, p.Symbol)
+		syms = append(syms, normalizeMarketDataSymbol(p.Symbol, p.InstrumentType))
 	}
 
 	client.Metrics.OpenPositions.Set(float64(len(positions)))

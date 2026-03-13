@@ -53,3 +53,5 @@ Examples:
   - tt watch status output now surfaces the latest reconciler snapshot
 - `MI-2026-03-13-phase3a-watch-operational-heartbeat.md`
   - compact tt watch heartbeat combining streamer and reconciler runtime health
+- `MI-2026-03-13-last-quote-metric-stuck-at-zero.md`
+  - investigation and fix for live quote metric staying at zero due to DXLink symbol format mismatch
