@@ -134,6 +134,7 @@ func (m *marketStreamer) setConnected(since time.Time) {
 	m.statusMu.Lock()
 	m.connected = true
 	m.connectedSince = since
+	m.lastEventAt = time.Time{} // stale detection is per-connection; reset quote clock on reconnect
 	m.lastError = ""
 	m.statusMu.Unlock()
 	client.Metrics.StreamerUptime.WithLabelValues(marketStreamerName).Set(0)
@@ -159,13 +160,15 @@ func (m *marketStreamer) touchLastEvent() {
 }
 
 // isStale reports whether the connection should be considered stale.
-// Returns true when:
-//   - there is at least one subscribed symbol (no point watching idle streams), AND
-//   - lastEventAt is non-zero (at least one quote has been expected), AND
+// Returns true only when:
+//   - there is at least one subscribed symbol, AND
+//   - at least one quote has been received on this connection (lastEventAt != 0), AND
 //   - no quote has been received within staleQuoteTimeout.
 //
-// Exposed as a method so tests can inject arbitrary lastEventAt values without
-// running a real WebSocket.
+// This intentionally does NOT treat a fresh connection with zero quotes as
+// stale. Closed-market conditions and illiquid symbols can legitimately produce
+// no initial quotes for long periods; reconnecting in that state only causes
+// churn.
 func (m *marketStreamer) isStale(now time.Time, timeout time.Duration) bool {
 	if len(m.currentSymbols()) == 0 {
 		return false
@@ -173,13 +176,6 @@ func (m *marketStreamer) isStale(now time.Time, timeout time.Duration) bool {
 	m.statusMu.RLock()
 	last := m.lastEventAt
 	m.statusMu.RUnlock()
-	if last.IsZero() {
-		// Connected but no quote ever received — start the clock from connection
-		// time so we don't fire immediately on a freshly-opened stream.
-		m.statusMu.RLock()
-		last = m.connectedSince
-		m.statusMu.RUnlock()
-	}
 	if last.IsZero() {
 		return false
 	}
@@ -334,7 +330,13 @@ func (m *marketStreamer) runOnce(ctx context.Context) error {
 		return fmt.Errorf("runOnce: await SETUP response: %w", err)
 	}
 
-	// Step 5: send AUTH.
+	// Step 5: DXLink sends AUTH_STATE=UNAUTHORIZED after SETUP. Consume that
+	// challenge before sending AUTH, per the documented protocol sequence.
+	if err := m.expectAuthStateValue(ctx, conn, "UNAUTHORIZED"); err != nil {
+		return fmt.Errorf("runOnce: await initial AUTH_STATE: %w", err)
+	}
+
+	// Step 6: send AUTH.
 	if err := wsjson.Write(ctx, conn, map[string]any{
 		"type":    "AUTH",
 		"channel": 0,
@@ -343,8 +345,8 @@ func (m *marketStreamer) runOnce(ctx context.Context) error {
 		return fmt.Errorf("runOnce: send AUTH: %w", err)
 	}
 
-	// Step 6: await AUTH_STATE AUTHORIZED.
-	if err := m.expectAuthState(ctx, conn); err != nil {
+	// Step 7: await AUTH_STATE AUTHORIZED.
+	if err := m.expectAuthStateValue(ctx, conn, "AUTHORIZED"); err != nil {
 		return fmt.Errorf("runOnce: await AUTH_STATE: %w", err)
 	}
 
@@ -472,8 +474,9 @@ func (m *marketStreamer) expectType(ctx context.Context, conn *websocket.Conn, w
 	}
 }
 
-// expectAuthState reads messages until AUTH_STATE AUTHORIZED arrives.
-func (m *marketStreamer) expectAuthState(ctx context.Context, conn *websocket.Conn) error {
+// expectAuthStateValue reads messages until AUTH_STATE arrives and then
+// requires its state to match want.
+func (m *marketStreamer) expectAuthStateValue(ctx context.Context, conn *websocket.Conn, want string) error {
 	for {
 		var raw json.RawMessage
 		if err := wsjson.Read(ctx, conn, &raw); err != nil {
@@ -486,7 +489,7 @@ func (m *marketStreamer) expectAuthState(ctx context.Context, conn *websocket.Co
 		if as.Type != "AUTH_STATE" {
 			continue
 		}
-		if as.State == "AUTHORIZED" {
+		if as.State == want {
 			return nil
 		}
 		return fmt.Errorf("AUTH_STATE: server returned %q", as.State)

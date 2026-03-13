@@ -41,3 +41,7 @@ Examples:
   - phase3a reconciler import review, safe selective merge, and validation
 - `MI-2026-03-12-watch-command-import-review.md`
   - watch-command import review, Cobra shutdown risk, and metrics env-var mismatch
+- `MI-2026-03-12-market-streamer-auth-investigation.md`
+  - DXLink quote-token auth investigation and likely AUTH_STATE sequencing bug
+- `MI-2026-03-13-market-watchdog-closed-market-fix.md`
+  - closed-market stale-watchdog churn fix and startup open-positions metric correction

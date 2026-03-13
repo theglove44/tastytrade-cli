@@ -10,9 +10,9 @@ package streamer
 //
 // Three cases required by spec:
 //  1. Watchdog does NOT fire when zero symbols are subscribed.
-//  2. Watchdog FIRES when symbols are subscribed and no quote received for
-//     longer than the timeout.
-//  3. Receiving a quote (touchLastEvent) refreshes the timer and prevents firing.
+//  2. Watchdog does NOT fire when symbols are subscribed but zero quotes have
+//     ever been received on the connection.
+//  3. After quote flow has started, watchdog FIRES when quotes go stale.
 
 import (
 	"context"
@@ -91,81 +91,57 @@ func TestWatchdog_ZeroSubscriptions_NeverFires(t *testing.T) {
 	}
 }
 
-// ─── Test 2: subscribed + stale → watchdog fires ─────────────────────────────
+// ─── Test 2: subscribed + zero quotes ever received → watchdog does not fire ─
 
-// TestWatchdog_StaleConnection_ForcesReconnect verifies that staleWatchdog
-// calls connCancel when symbols are subscribed and no quote has arrived within
-// the timeout window.
-func TestWatchdog_StaleConnection_ForcesReconnect(t *testing.T) {
+// TestWatchdog_NoInitialQuotes_DoesNotForceReconnect verifies that staleWatchdog
+// does not reconnect churn a connection that has subscribed symbols but has not
+// yet received any quote on this connection.
+func TestWatchdog_NoInitialQuotes_DoesNotForceReconnect(t *testing.T) {
 	m := newTestMarketStreamer([]string{"SPY", ".XSP250117C580"})
 
-	// Set connectedSince to long ago and leave lastEventAt zero.
-	// isStale falls back to connectedSince when lastEventAt is zero.
+	// Even if the connection has been open for a long time, zero quotes received
+	// must not be considered stale.
 	now := time.Now()
 	m.statusMu.Lock()
-	m.connectedSince = now.Add(-5 * time.Minute) // well past any timeout
-	// lastEventAt intentionally left zero — no quote ever received
+	m.connectedSince = now.Add(-5 * time.Minute)
+	m.lastEventAt = time.Time{}
 	m.statusMu.Unlock()
 
-	// Sanity-check isStale before running the goroutine.
-	if !m.isStale(now, 90*time.Second) {
-		t.Fatal("isStale returned false — test precondition not met")
-	}
-
-	connCancelCalled := make(chan struct{}, 1)
-	connCancel := func() {
-		select {
-		case connCancelCalled <- struct{}{}:
-		default:
-		}
+	if m.isStale(now, 90*time.Second) {
+		t.Fatal("isStale returned true with zero quotes received — closed-market connections must not churn")
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
+	connCancelCalled := false
+	connCancel := func() { connCancelCalled = true }
 	done := make(chan struct{})
-	// Use a very short timeout (1ms) and check interval (5ms) so the test
-	// completes in milliseconds rather than 90 seconds.
 	go m.staleWatchdog(ctx, connCancel, 1*time.Millisecond, 5*time.Millisecond, done)
 
-	select {
-	case <-connCancelCalled:
-		// Watchdog fired — correct.
-	case <-time.After(2 * time.Second):
-		t.Fatal("staleWatchdog did not call connCancel within 2s for a stale connection")
-	}
-
-	// Watchdog should also exit (done closed) after calling connCancel.
+	time.Sleep(60 * time.Millisecond)
+	cancel()
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
-		t.Fatal("staleWatchdog goroutine did not exit after firing")
+		t.Fatal("staleWatchdog did not exit after context cancel")
+	}
+	if connCancelCalled {
+		t.Fatal("connCancel was called despite zero quotes ever received")
 	}
 }
 
-// ─── Test 3: quote received → timer refreshed → watchdog does not fire ───────
+// ─── Test 3: quote flow started then went stale → watchdog fires ─────────────
 
 // TestWatchdog_QuoteRefreshesTimer verifies that calling touchLastEvent resets
-// the stale clock, preventing the watchdog from firing even when the connection
-// has been open for longer than the timeout.
+// the stale clock, preventing the watchdog from firing while the quote remains
+// fresh.
 func TestWatchdog_QuoteRefreshesTimer(t *testing.T) {
 	m := newTestMarketStreamer([]string{"SPY"})
-
-	// Set connectedSince to long ago — without quotes, this would be stale.
-	m.statusMu.Lock()
-	m.connectedSince = time.Now().Add(-5 * time.Minute)
-	m.statusMu.Unlock()
-
-	// Simulate receiving a quote just now — touchLastEvent writes lastEventAt = now.
 	m.touchLastEvent()
 
-	// isStale must return false: lastEventAt is fresh, timeout is 90s.
 	if m.isStale(time.Now(), 90*time.Second) {
 		t.Error("isStale returned true immediately after touchLastEvent — timer not refreshed")
 	}
 
-	// Run the watchdog with a generous timeout (500ms) and fast check (10ms).
-	// Over a 100ms window it should never fire because lastEventAt is fresh.
 	connCancelCalled := false
 	connCancel := func() { connCancelCalled = true }
 
@@ -173,7 +149,6 @@ func TestWatchdog_QuoteRefreshesTimer(t *testing.T) {
 	done := make(chan struct{})
 	go m.staleWatchdog(ctx, connCancel, 500*time.Millisecond, 10*time.Millisecond, done)
 
-	// Wait for several check cycles.
 	time.Sleep(80 * time.Millisecond)
 	cancel()
 
@@ -188,16 +163,84 @@ func TestWatchdog_QuoteRefreshesTimer(t *testing.T) {
 	}
 }
 
+// TestWatchdog_QuoteFlowStartedThenWentStale verifies that after at least one
+// quote has been received, the watchdog still reconnects a genuinely stale feed.
+func TestWatchdog_QuoteFlowStartedThenWentStale(t *testing.T) {
+	m := newTestMarketStreamer([]string{"SPY"})
+	now := time.Now()
+	m.statusMu.Lock()
+	m.lastEventAt = now.Add(-5 * time.Minute)
+	m.statusMu.Unlock()
+
+	if !m.isStale(now, 90*time.Second) {
+		t.Fatal("isStale returned false after quote flow had gone stale")
+	}
+
+	connCancelCalled := make(chan struct{}, 1)
+	connCancel := func() {
+		select {
+		case connCancelCalled <- struct{}{}:
+		default:
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go m.staleWatchdog(ctx, connCancel, 1*time.Millisecond, 5*time.Millisecond, done)
+
+	select {
+	case <-connCancelCalled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("staleWatchdog did not call connCancel within 2s for a stale post-quote connection")
+	}
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("staleWatchdog goroutine did not exit after firing")
+	}
+}
+
+// TestSetConnected_ResetsQuoteClock verifies that stale detection is scoped to
+// the current websocket connection. A previous connection may have received
+// quotes, but a fresh reconnect with zero quotes so far must not be considered
+// stale just because the old lastEventAt timestamp was ancient.
+func TestSetConnected_ResetsQuoteClock(t *testing.T) {
+	m := newTestMarketStreamer([]string{"SPY"})
+	now := time.Now()
+	m.statusMu.Lock()
+	m.lastEventAt = now.Add(-10 * time.Minute)
+	m.connectedSince = now.Add(-10 * time.Minute)
+	m.statusMu.Unlock()
+
+	if !m.isStale(now, 90*time.Second) {
+		t.Fatal("precondition failed: old connection should be stale")
+	}
+
+	m.setConnected(now)
+
+	m.statusMu.RLock()
+	last := m.lastEventAt
+	since := m.connectedSince
+	m.statusMu.RUnlock()
+	if !last.IsZero() {
+		t.Fatal("setConnected did not reset lastEventAt for the new connection")
+	}
+	if since.IsZero() {
+		t.Fatal("setConnected did not record connectedSince")
+	}
+	if m.isStale(now.Add(10*time.Minute), 90*time.Second) {
+		t.Fatal("new connection with zero quotes was considered stale after reconnect")
+	}
+}
+
 // ─── Additional: isStale edge cases ──────────────────────────────────────────
 
-// TestIsStale_ZeroConnectedSince verifies that isStale returns false when both
-// lastEventAt and connectedSince are zero (streamer not yet connected).
-// This prevents spurious fires during the handshake window.
+// TestIsStale_ZeroConnectedSince verifies that isStale returns false when no
+// quote has ever been received.
 func TestIsStale_ZeroConnectedSince(t *testing.T) {
 	m := newTestMarketStreamer([]string{"SPY"})
-	// Both times are zero (zero value of time.Time) — streamer not yet connected.
 	if m.isStale(time.Now(), 90*time.Second) {
-		t.Error("isStale must return false when connectedSince is zero (not yet connected)")
+		t.Error("isStale must return false when no quote has ever been received")
 	}
 }
 

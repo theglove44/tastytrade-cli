@@ -454,6 +454,7 @@ func seedMarkBookFromREST(
 		syms = append(syms, p.Symbol)
 	}
 
+	client.Metrics.OpenPositions.Set(float64(len(positions)))
 	log.Info("startup position seeding complete",
 		zap.String("account", accountID),
 		zap.Int("positions", len(positions)),
