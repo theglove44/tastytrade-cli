@@ -56,6 +56,12 @@ var (
 	flagJSON       bool
 	flagVerbose    bool
 	flagNoStreamer bool
+
+	// watchShutdown is initialised in PersistentPreRunE for the watch command
+	// before any runtime goroutines are started. shutdown() closes it after all
+	// consumers/reconciler/store teardown has completed, allowing watchCmd.RunE
+	// to block until clean shutdown is finished.
+	watchShutdown chan struct{}
 )
 
 var rootCmd = &cobra.Command{
@@ -68,6 +74,12 @@ All credentials are stored in the OS keychain. Run 'tt login' first.`,
 		switch cmd.Name() {
 		case "login", "kill", "resume":
 			return nil
+		}
+
+		if cmd.Name() == "watch" {
+			watchShutdown = make(chan struct{})
+		} else {
+			watchShutdown = nil
 		}
 
 		var err error
@@ -90,14 +102,17 @@ All credentials are stored in the OS keychain. Run 'tt login' first.`,
 		}
 
 		if flagNoStreamer || st == nil {
-			if st != nil {
-				go func() {
-					<-cmd.Context().Done()
+			go func() {
+				<-cmd.Context().Done()
+				if st != nil {
 					if cerr := st.Close(); cerr != nil {
 						logger.Warn("store close error", zap.Error(cerr))
 					}
-				}()
-			}
+				}
+				if watchShutdown != nil {
+					close(watchShutdown)
+				}
+			}()
 			return nil
 		}
 
@@ -193,6 +208,10 @@ All credentials are stored in the OS keychain. Run 'tt login' first.`,
 			// Step 3: close the store — all writers have exited.
 			if cerr := st.Close(); cerr != nil {
 				logger.Warn("store close error", zap.Error(cerr))
+			}
+			// Step 4: signal the watch command (if running) that shutdown is complete.
+			if watchShutdown != nil {
+				close(watchShutdown)
 			}
 		}
 
@@ -478,5 +497,6 @@ func init() {
 		dryRunCmd,
 		killCmd,
 		resumeCmd,
+		watchCmd,
 	)
 }

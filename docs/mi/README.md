@@ -39,3 +39,5 @@ Examples:
   - phase2c import diff review, architectural additions, and regression risks
 - `MI-2026-03-12-phase3a-reconciler-import-review.md`
   - phase3a reconciler import review, safe selective merge, and validation
+- `MI-2026-03-12-watch-command-import-review.md`
+  - watch-command import review, Cobra shutdown risk, and metrics env-var mismatch
