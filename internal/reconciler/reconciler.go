@@ -55,6 +55,44 @@ type Reconciler interface {
 	Start(ctx context.Context)
 }
 
+// Status is the structured outcome of a reconciliation pass.
+type Status string
+
+const (
+	StatusOK            Status = "ok"
+	StatusDriftDetected Status = "drift_detected"
+	StatusPartial       Status = "partial"
+	StatusError         Status = "error"
+)
+
+// Mismatch captures one detected drift item from a reconciliation pass.
+type Mismatch struct {
+	Symbol   string `json:"symbol"`
+	Category string `json:"category"`
+	Action   string `json:"action,omitempty"`
+}
+
+// Result is the structured outcome of a single reconciliation pass.
+type Result struct {
+	RunAt              time.Time      `json:"run_at"`
+	Duration           time.Duration  `json:"duration"`
+	Status             Status         `json:"status"`
+	PositionsChecked   int            `json:"positions_checked"`
+	SymbolsChecked     int            `json:"symbols_checked"`
+	MismatchCount      int            `json:"mismatch_count"`
+	MismatchCategories map[string]int `json:"mismatch_categories,omitempty"`
+	RecoveryTriggered  bool           `json:"recovery_triggered"`
+	Action             string         `json:"action,omitempty"`
+	ErrorText          string         `json:"error_text,omitempty"`
+	Mismatches         []Mismatch     `json:"mismatches,omitempty"`
+}
+
+func (r *Result) addMismatch(symbol, category, action string) {
+	r.MismatchCount++
+	r.MismatchCategories[category]++
+	r.Mismatches = append(r.Mismatches, Mismatch{Symbol: symbol, Category: category, Action: action})
+}
+
 // Config holds the tunable parameters for the reconciler.
 // Populated from config.Config and passed by root.go.
 type Config struct {
@@ -147,46 +185,60 @@ func (r *reconciler) Start(ctx context.Context) {
 // runOnce executes a single reconciliation pass.
 // It is exported via the test-only helper RunOnceForTest to allow direct
 // invocation in tests without waiting for the ticker.
-func (r *reconciler) runOnce(ctx context.Context) {
+func (r *reconciler) runOnce(ctx context.Context) Result {
+	startedAt := time.Now()
+	result := Result{
+		RunAt:              startedAt,
+		Status:             StatusOK,
+		MismatchCategories: make(map[string]int),
+	}
 	client.Metrics.ReconcileRunsTotal.Inc()
 
 	// Record the time before the REST call. Any MarkBook entry with
 	// PositionLoadedAt >= fetchedAt was updated by the account streamer
 	// during or after this call — we must not overwrite it.
-	fetchedAt := time.Now()
+	fetchedAt := startedAt
 
 	positions, err := r.ex.Positions(ctx, r.accountID)
 	if err != nil {
+		result.Status = StatusError
+		result.ErrorText = err.Error()
+		result.Duration = time.Since(startedAt)
 		client.Metrics.ReconcileErrorsTotal.Inc()
-		r.log.Warn("reconciler: REST positions fetch failed — MarkBook unchanged",
+		r.recordMetrics(result)
+		r.log.Warn("reconciler: pass complete",
+			zap.String("status", string(result.Status)),
 			zap.String("account", r.accountID),
-			zap.Error(err),
+			zap.Int("positions_checked", result.PositionsChecked),
+			zap.Int("symbols_checked", result.SymbolsChecked),
+			zap.Int("mismatches", result.MismatchCount),
+			zap.Bool("recovery_triggered", result.RecoveryTriggered),
+			zap.String("action", result.Action),
+			zap.Duration("duration", result.Duration),
+			zap.String("error", result.ErrorText),
 		)
-		return
+		return result
 	}
 
-	// Build a set of symbols present in the REST response.
+	result.PositionsChecked = len(positions)
+
 	restSymbols := make(map[string]models.Position, len(positions))
 	for _, p := range positions {
 		restSymbols[p.Symbol] = p
 	}
 
-	corrected := 0
+	storeWriteErrors := 0
 
-	// ── Pass 1: add missing or update stale MarkBook entries ─────────────────
 	for sym, restPos := range restSymbols {
-		// Determine the effective AvgOpenPrice: prefer AverageOpenPrice from
-		// REST; fall back to ClosePrice if zero (matches startup seed logic).
 		avgOpen := restPos.AverageOpenPrice
 		if avgOpen.IsZero() {
 			avgOpen = restPos.ClosePrice
 		}
 
 		snap := r.book.Snapshot(sym)
-		positionExists := snap.Quantity != "" // non-empty means a position is loaded
+		positionExists := snap.Quantity != ""
 
 		if !positionExists {
-			// Symbol is in REST but absent from MarkBook — add it.
 			r.book.LoadPosition(
 				sym,
 				restPos.AccountNumber,
@@ -194,31 +246,16 @@ func (r *reconciler) runOnce(ctx context.Context) {
 				restPos.QuantityDirection,
 				avgOpen,
 			)
-			corrected++
-			r.log.Info("reconciler: added missing position",
-				zap.String("symbol", sym),
-				zap.String("avg_open", avgOpen.String()),
-			)
+			result.addMismatch(sym, "missing_in_markbook", "load_position")
 		} else {
-			// Symbol exists in MarkBook. Only update if:
-			//   (a) the existing AvgOpenPrice is zero (the known Phase 2 sentinel), OR
-			//   (b) the REST UpdatedAt is newer than the MarkBook entry's LoadedAt
-			//       AND the entry was not updated by the streamer after fetchedAt.
-			//
-			// Guard: if PositionLoadedAt >= fetchedAt, a streamer event arrived
-			// during this REST call — leave that entry intact.
-			if !snap.PositionLoadedAt.Before(fetchedAt) {
-				// Streamer updated this entry after we started the REST call.
-				// The streamer data is authoritative for quantity/direction;
-				// but it carries decimal.Zero for AvgOpenPrice. To avoid
-				// regressing a previously correct AvgOpenPrice, only patch
-				// if the existing value is still zero.
-				if !snap.AvgOpenPrice.IsZero() {
-					continue // streamer wrote a non-zero price — trust it
+			if !snap.PositionLoadedAt.Before(fetchedAt) && !snap.AvgOpenPrice.IsZero() {
+				delete(r.absenceCounts, sym)
+				if err := r.writeSnapshot(ctx, restPos, fetchedAt); err != nil {
+					storeWriteErrors++
 				}
+				continue
 			}
 
-			// Patch if AvgOpenPrice is zero or differs from REST.
 			if snap.AvgOpenPrice.IsZero() || !snap.AvgOpenPrice.Equal(avgOpen) {
 				r.book.LoadPosition(
 					sym,
@@ -227,69 +264,100 @@ func (r *reconciler) runOnce(ctx context.Context) {
 					restPos.QuantityDirection,
 					avgOpen,
 				)
-				corrected++
-				r.log.Info("reconciler: corrected AvgOpenPrice",
-					zap.String("symbol", sym),
-					zap.String("was", snap.AvgOpenPrice.String()),
-					zap.String("now", avgOpen.String()),
-				)
+				result.addMismatch(sym, "avg_open_drift", "load_position")
 			}
 		}
 
-		// Symbol was seen — clear any absence counter.
 		delete(r.absenceCounts, sym)
-
-		// Persist snapshot to store (best-effort; never blocks on error).
-		r.writeSnapshot(ctx, restPos, fetchedAt)
+		if err := r.writeSnapshot(ctx, restPos, fetchedAt); err != nil {
+			storeWriteErrors++
+		}
 	}
 
-	// ── Pass 2: handle symbols in MarkBook absent from REST ──────────────────
+	bookPositions := 0
 	for _, snap := range r.book.AllSnapshots() {
 		sym := snap.Symbol
 		if snap.Quantity == "" {
-			// Quote-only entry (no position) — not our concern.
 			continue
 		}
+		bookPositions++
 		if _, seen := restSymbols[sym]; seen {
-			continue // already handled above
+			continue
 		}
 
-		// Symbol is in MarkBook but absent from REST.
 		r.absenceCounts[sym]++
 		count := r.absenceCounts[sym]
 
 		if count >= r.cfg.AbsenceThreshold {
 			r.book.RemovePosition(sym)
 			delete(r.absenceCounts, sym)
-			r.log.Info("reconciler: removed position absent from REST",
-				zap.String("symbol", sym),
-				zap.Int("absence_passes", count),
-			)
+			result.addMismatch(sym, "absent_from_rest", "remove_position")
 		} else {
-			r.log.Debug("reconciler: position absent from REST — awaiting confirmation",
-				zap.String("symbol", sym),
-				zap.Int("absence_count", count),
-				zap.Int("threshold", r.cfg.AbsenceThreshold),
+			result.addMismatch(sym, "absence_pending", "await_confirmation")
+		}
+	}
+	result.SymbolsChecked = maxInt(result.PositionsChecked, bookPositions)
+
+	result.Duration = time.Since(startedAt)
+	if storeWriteErrors > 0 {
+		result.Status = StatusPartial
+		result.ErrorText = "snapshot_write_failed"
+	}
+	if result.MismatchCount > 0 {
+		if result.Status == StatusOK {
+			result.Status = StatusDriftDetected
+		}
+		result.RecoveryTriggered = true
+		result.Action = "markbook_reconciled"
+		client.Metrics.ReconcilePositionsCorrected.Add(float64(result.MismatchCount))
+		for _, mm := range result.Mismatches {
+			r.log.Debug("reconciler: mismatch detected",
+				zap.String("symbol", mm.Symbol),
+				zap.String("category", mm.Category),
+				zap.String("action", mm.Action),
 			)
 		}
 	}
-
-	if corrected > 0 {
-		client.Metrics.ReconcilePositionsCorrected.Add(float64(corrected))
+	if result.Status == StatusPartial && result.Action == "" {
+		result.Action = "snapshot_write_degraded"
 	}
 
-	r.log.Debug("reconciler: pass complete",
-		zap.Int("rest_positions", len(positions)),
-		zap.Int("corrected", corrected),
+	r.recordMetrics(result)
+	r.log.Info("reconciler: pass complete",
+		zap.String("status", string(result.Status)),
+		zap.String("account", r.accountID),
+		zap.Int("positions_checked", result.PositionsChecked),
+		zap.Int("symbols_checked", result.SymbolsChecked),
+		zap.Int("mismatches", result.MismatchCount),
+		zap.Bool("recovery_triggered", result.RecoveryTriggered),
+		zap.String("action", result.Action),
+		zap.Duration("duration", result.Duration),
 	)
+	return result
+}
+
+func (r *reconciler) recordMetrics(result Result) {
+	client.Metrics.ReconcileRunsByStatus.WithLabelValues(string(result.Status)).Inc()
+	client.Metrics.ReconcileLastStatus.WithLabelValues(string(result.Status)).Set(1)
+	for _, status := range []Status{StatusOK, StatusDriftDetected, StatusPartial, StatusError} {
+		if status == result.Status {
+			continue
+		}
+		client.Metrics.ReconcileLastStatus.WithLabelValues(string(status)).Set(0)
+	}
+	client.Metrics.ReconcileLastDurationSeconds.Set(result.Duration.Seconds())
+	client.Metrics.ReconcileLastMismatchCount.Set(float64(result.MismatchCount))
+	if result.ErrorText != "" {
+		client.Metrics.ReconcileErrorsByType.WithLabelValues(result.ErrorText).Inc()
+	}
 }
 
 // writeSnapshot persists a position snapshot from the REST response.
 // Errors are logged but never propagated — a write failure must not abort the
 // reconciliation pass or modify MarkBook state.
-func (r *reconciler) writeSnapshot(ctx context.Context, p models.Position, snapshottedAt time.Time) {
+func (r *reconciler) writeSnapshot(ctx context.Context, p models.Position, snapshottedAt time.Time) error {
 	if r.st == nil {
-		return
+		return nil
 	}
 	snap := store.PositionSnapshot{
 		AccountNumber:     p.AccountNumber,
@@ -308,7 +376,9 @@ func (r *reconciler) writeSnapshot(ctx context.Context, p models.Position, snaps
 			zap.String("symbol", p.Symbol),
 			zap.Error(err),
 		)
+		return err
 	}
+	return nil
 }
 
 // effectiveAvgOpen returns AverageOpenPrice if non-zero, else ClosePrice.
@@ -320,9 +390,16 @@ func effectiveAvgOpen(p models.Position) decimal.Decimal {
 	return p.ClosePrice
 }
 
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
 // RunOnceForTest exposes runOnce for direct invocation in tests.
 // Not part of the Reconciler interface — test files import this package
 // directly and type-assert to *reconciler.
-func RunOnceForTest(r Reconciler, ctx context.Context) {
-	r.(*reconciler).runOnce(ctx)
+func RunOnceForTest(r Reconciler, ctx context.Context) Result {
+	return r.(*reconciler).runOnce(ctx)
 }

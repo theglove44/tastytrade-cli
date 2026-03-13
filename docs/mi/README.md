@@ -45,3 +45,5 @@ Examples:
   - DXLink quote-token auth investigation and likely AUTH_STATE sequencing bug
 - `MI-2026-03-13-market-watchdog-closed-market-fix.md`
   - closed-market stale-watchdog churn fix and startup open-positions metric correction
+- `MI-2026-03-13-phase3a-reconciler-result-model.md`
+  - structured reconciler run result model, status metrics, and summary logging

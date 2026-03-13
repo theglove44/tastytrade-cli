@@ -72,9 +72,14 @@ type metrics struct {
 	BusDroppedEvents *prometheus.CounterVec
 
 	// Reconciler observability (Phase 3A)
-	ReconcileRunsTotal          prometheus.Counter
-	ReconcileErrorsTotal        prometheus.Counter
-	ReconcilePositionsCorrected prometheus.Counter
+	ReconcileRunsTotal           prometheus.Counter
+	ReconcileErrorsTotal         prometheus.Counter
+	ReconcilePositionsCorrected  prometheus.Counter
+	ReconcileRunsByStatus        *prometheus.CounterVec
+	ReconcileErrorsByType        *prometheus.CounterVec
+	ReconcileLastStatus          *prometheus.GaugeVec
+	ReconcileLastDurationSeconds prometheus.Gauge
+	ReconcileLastMismatchCount   prometheus.Gauge
 }
 
 func newMetrics() *metrics {
@@ -177,6 +182,26 @@ func newMetrics() *metrics {
 		ReconcilePositionsCorrected: promauto.NewCounter(prometheus.CounterOpts{
 			Name: "tastytrade_reconcile_positions_corrected_total",
 			Help: "MarkBook entries patched by the reconciler (new positions added + zero-cost-basis entries corrected).",
+		}),
+		ReconcileRunsByStatus: promauto.NewCounterVec(prometheus.CounterOpts{
+			Name: "tastytrade_reconcile_runs_by_status_total",
+			Help: "Reconciliation passes by structured outcome status.",
+		}, []string{"status"}),
+		ReconcileErrorsByType: promauto.NewCounterVec(prometheus.CounterOpts{
+			Name: "tastytrade_reconcile_errors_by_type_total",
+			Help: "Reconciliation errors by coarse error type or error text.",
+		}, []string{"type"}),
+		ReconcileLastStatus: promauto.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "tastytrade_reconcile_last_status",
+			Help: "One-hot gauge for the latest reconciliation status by label (1 = latest status, 0 = not latest).",
+		}, []string{"status"}),
+		ReconcileLastDurationSeconds: promauto.NewGauge(prometheus.GaugeOpts{
+			Name: "tastytrade_reconcile_last_duration_seconds",
+			Help: "Duration in seconds of the latest reconciliation pass.",
+		}),
+		ReconcileLastMismatchCount: promauto.NewGauge(prometheus.GaugeOpts{
+			Name: "tastytrade_reconcile_last_mismatch_count",
+			Help: "Mismatch count from the latest reconciliation pass.",
 		}),
 	}
 }

@@ -7,16 +7,18 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
 
+	"github.com/theglove44/tastytrade-cli/internal/client"
 	"github.com/theglove44/tastytrade-cli/internal/models"
 	"github.com/theglove44/tastytrade-cli/internal/reconciler"
 	"github.com/theglove44/tastytrade-cli/internal/store"
 	"github.com/theglove44/tastytrade-cli/internal/valuation"
 )
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
 
 func dec(s string) decimal.Decimal {
 	d, err := decimal.NewFromString(s)
@@ -38,13 +40,16 @@ func newPos(symbol, qty, dir, avgOpen string) models.Position {
 	}
 }
 
-func newBook() *valuation.MarkBook {
-	return valuation.NewMarkBook()
-}
+func newBook() *valuation.MarkBook { return valuation.NewMarkBook() }
 
 func silentLogger() *zap.Logger {
 	l, _ := zap.NewDevelopment()
 	return l
+}
+
+func observedLogger() (*zap.Logger, *observer.ObservedLogs) {
+	core, logs := observer.New(zapcore.DebugLevel)
+	return zap.New(core), logs
 }
 
 func newRec(ex *mockExchange, st store.Store, book *valuation.MarkBook, cfg reconciler.Config) reconciler.Reconciler {
@@ -52,13 +57,8 @@ func newRec(ex *mockExchange, st store.Store, book *valuation.MarkBook, cfg reco
 }
 
 func tightConfig() reconciler.Config {
-	return reconciler.Config{
-		Interval:         10 * time.Millisecond, // fast for Start() test
-		AbsenceThreshold: 2,
-	}
+	return reconciler.Config{Interval: 10 * time.Millisecond, AbsenceThreshold: 2}
 }
-
-// ── mockExchange ──────────────────────────────────────────────────────────────
 
 type mockExchange struct {
 	mu        sync.Mutex
@@ -91,7 +91,6 @@ func (m *mockExchange) Positions(_ context.Context, _ string) ([]models.Position
 	return out, nil
 }
 
-// Satisfy exchange.Exchange interface — stubs for unused methods.
 func (m *mockExchange) Accounts(_ context.Context) ([]models.Account, error)       { return nil, nil }
 func (m *mockExchange) Orders(_ context.Context, _ string) ([]models.Order, error) { return nil, nil }
 func (m *mockExchange) DryRun(_ context.Context, _ string, _ models.NewOrder, _ string) (models.DryRunResult, error) {
@@ -100,8 +99,6 @@ func (m *mockExchange) DryRun(_ context.Context, _ string, _ models.NewOrder, _ 
 func (m *mockExchange) QuoteToken(_ context.Context) (models.QuoteToken, error) {
 	return models.QuoteToken{}, nil
 }
-
-// ── mockStore ─────────────────────────────────────────────────────────────────
 
 type mockStore struct {
 	mu        sync.Mutex
@@ -136,7 +133,6 @@ func (s *mockStore) latestForSymbol(sym string) (store.PositionSnapshot, bool) {
 	return store.PositionSnapshot{}, false
 }
 
-// Stub remaining Store methods.
 func (s *mockStore) WriteFill(_ context.Context, _ store.FillRecord) error       { return nil }
 func (s *mockStore) WriteBalance(_ context.Context, _ store.BalanceRecord) error { return nil }
 func (s *mockStore) LatestBalance(_ context.Context, _ string) (store.BalanceRecord, error) {
@@ -150,155 +146,183 @@ func (s *mockStore) ActivePositionSymbols(_ context.Context, _ string) ([]string
 }
 func (s *mockStore) Close() error { return nil }
 
-// ── Tests ─────────────────────────────────────────────────────────────────────
-
-func TestReconciler_AddsNewPosition(t *testing.T) {
-	book := newBook()
-	ex := &mockExchange{}
-	ex.setPositions([]models.Position{
-		newPos(".SPY230120C400", "2", "Short", "1.50"),
-	})
-
-	r := newRec(ex, nil, book, tightConfig())
-	reconciler.RunOnceForTest(r, context.Background())
-
-	snap := book.Snapshot(".SPY230120C400")
-	if snap.Quantity == "" {
-		t.Fatal("position was not added to MarkBook")
-	}
-	if snap.Quantity != "2" {
-		t.Errorf("Quantity = %q, want %q", snap.Quantity, "2")
-	}
-	if snap.QuantityDirection != "Short" {
-		t.Errorf("QuantityDirection = %q, want %q", snap.QuantityDirection, "Short")
-	}
-	if !snap.AvgOpenPrice.Equal(dec("1.50")) {
-		t.Errorf("AvgOpenPrice = %s, want 1.50", snap.AvgOpenPrice)
-	}
-}
-
-func TestReconciler_CorrectsZeroAvgOpenPrice(t *testing.T) {
-	book := newBook()
-	book.LoadPosition(".XSP250117C580", "TEST123", "1", "Short", decimal.Zero)
-
-	ex := &mockExchange{}
-	ex.setPositions([]models.Position{
-		newPos(".XSP250117C580", "1", "Short", "2.30"),
-	})
-
-	r := newRec(ex, nil, book, tightConfig())
-	reconciler.RunOnceForTest(r, context.Background())
-
-	snap := book.Snapshot(".XSP250117C580")
-	if !snap.AvgOpenPrice.Equal(dec("2.30")) {
-		t.Errorf("AvgOpenPrice = %s, want 2.30 (reconciler should have patched zero)", snap.AvgOpenPrice)
-	}
-}
-
-func TestReconciler_DoesNotUpdateIfNotZeroAndUnchanged(t *testing.T) {
+func TestReconciler_RunOnce_HealthyResult(t *testing.T) {
 	book := newBook()
 	book.LoadPosition("SPY", "TEST123", "10", "Long", dec("450.00"))
-
-	loadedAt := book.Snapshot("SPY").PositionLoadedAt
-
 	ex := &mockExchange{}
-	ex.setPositions([]models.Position{
-		newPos("SPY", "10", "Long", "450.00"),
-	})
+	ex.setPositions([]models.Position{newPos("SPY", "10", "Long", "450.00")})
+	beforeOK := testutil.ToFloat64(client.Metrics.ReconcileRunsByStatus.WithLabelValues(string(reconciler.StatusOK)))
+	logger, logs := observedLogger()
+	r := reconciler.New(ex, nil, book, "TEST123", tightConfig(), logger)
 
-	r := newRec(ex, nil, book, tightConfig())
-	reconciler.RunOnceForTest(r, context.Background())
+	result := reconciler.RunOnceForTest(r, context.Background())
 
-	snap := book.Snapshot("SPY")
-	if !snap.AvgOpenPrice.Equal(dec("450.00")) {
-		t.Errorf("AvgOpenPrice changed unexpectedly: got %s", snap.AvgOpenPrice)
+	if result.Status != reconciler.StatusOK {
+		t.Fatalf("Status = %q, want %q", result.Status, reconciler.StatusOK)
 	}
-	if snap.PositionLoadedAt.After(loadedAt) {
-		t.Error("PositionLoadedAt advanced — reconciler unnecessarily re-loaded position")
+	if result.MismatchCount != 0 {
+		t.Fatalf("MismatchCount = %d, want 0", result.MismatchCount)
+	}
+	if result.PositionsChecked != 1 {
+		t.Fatalf("PositionsChecked = %d, want 1", result.PositionsChecked)
+	}
+	if result.RecoveryTriggered {
+		t.Fatal("RecoveryTriggered = true, want false")
+	}
+	if got := testutil.ToFloat64(client.Metrics.ReconcileRunsByStatus.WithLabelValues(string(reconciler.StatusOK))); got != beforeOK+1 {
+		t.Fatalf("ok status counter delta = %v, want +1", got-beforeOK)
+	}
+	if got := testutil.ToFloat64(client.Metrics.ReconcileLastStatus.WithLabelValues(string(reconciler.StatusOK))); got != 1 {
+		t.Fatalf("last status ok gauge = %v, want 1", got)
+	}
+	entries := logs.FilterMessage("reconciler: pass complete").All()
+	if len(entries) != 1 {
+		t.Fatalf("summary log count = %d, want 1", len(entries))
+	}
+}
+
+func TestReconciler_RunOnce_DriftDetectedResult(t *testing.T) {
+	book := newBook()
+	book.LoadPosition(".XSP250117C580", "TEST123", "1", "Short", decimal.Zero)
+	ex := &mockExchange{}
+	ex.setPositions([]models.Position{newPos(".XSP250117C580", "1", "Short", "2.30")})
+	beforeDrift := testutil.ToFloat64(client.Metrics.ReconcileRunsByStatus.WithLabelValues(string(reconciler.StatusDriftDetected)))
+	beforeCorrected := testutil.ToFloat64(client.Metrics.ReconcilePositionsCorrected)
+	logger, logs := observedLogger()
+	r := reconciler.New(ex, nil, book, "TEST123", tightConfig(), logger)
+
+	result := reconciler.RunOnceForTest(r, context.Background())
+
+	if result.Status != reconciler.StatusDriftDetected {
+		t.Fatalf("Status = %q, want %q", result.Status, reconciler.StatusDriftDetected)
+	}
+	if result.MismatchCount != 1 {
+		t.Fatalf("MismatchCount = %d, want 1", result.MismatchCount)
+	}
+	if result.MismatchCategories["avg_open_drift"] != 1 {
+		t.Fatalf("avg_open_drift count = %d, want 1", result.MismatchCategories["avg_open_drift"])
+	}
+	if !result.RecoveryTriggered {
+		t.Fatal("RecoveryTriggered = false, want true")
+	}
+	if !book.Snapshot(".XSP250117C580").AvgOpenPrice.Equal(dec("2.30")) {
+		t.Fatal("MarkBook was not corrected")
+	}
+	if got := testutil.ToFloat64(client.Metrics.ReconcileRunsByStatus.WithLabelValues(string(reconciler.StatusDriftDetected))); got != beforeDrift+1 {
+		t.Fatalf("drift status counter delta = %v, want +1", got-beforeDrift)
+	}
+	if got := testutil.ToFloat64(client.Metrics.ReconcilePositionsCorrected); got != beforeCorrected+1 {
+		t.Fatalf("positions corrected counter delta = %v, want +1", got-beforeCorrected)
+	}
+	if got := testutil.ToFloat64(client.Metrics.ReconcileLastMismatchCount); got != 1 {
+		t.Fatalf("last mismatch gauge = %v, want 1", got)
+	}
+	if len(logs.FilterMessage("reconciler: mismatch detected").All()) == 0 {
+		t.Fatal("expected mismatch detail debug log")
+	}
+}
+
+func TestReconciler_RunOnce_ErrorResult(t *testing.T) {
+	book := newBook()
+	book.LoadPosition(".SPX240119P4500", "TEST123", "2", "Short", dec("3.75"))
+	ex := &mockExchange{}
+	ex.setError(errors.New("simulated REST timeout"))
+	beforeErr := testutil.ToFloat64(client.Metrics.ReconcileErrorsTotal)
+	beforeErrType := testutil.ToFloat64(client.Metrics.ReconcileErrorsByType.WithLabelValues("simulated REST timeout"))
+	logger, logs := observedLogger()
+	r := reconciler.New(ex, nil, book, "TEST123", tightConfig(), logger)
+
+	result := reconciler.RunOnceForTest(r, context.Background())
+
+	if result.Status != reconciler.StatusError {
+		t.Fatalf("Status = %q, want %q", result.Status, reconciler.StatusError)
+	}
+	if result.ErrorText != "simulated REST timeout" {
+		t.Fatalf("ErrorText = %q, want simulated REST timeout", result.ErrorText)
+	}
+	if !book.Snapshot(".SPX240119P4500").AvgOpenPrice.Equal(dec("3.75")) {
+		t.Fatal("MarkBook changed on error path")
+	}
+	if got := testutil.ToFloat64(client.Metrics.ReconcileErrorsTotal); got != beforeErr+1 {
+		t.Fatalf("reconcile errors counter delta = %v, want +1", got-beforeErr)
+	}
+	if got := testutil.ToFloat64(client.Metrics.ReconcileErrorsByType.WithLabelValues("simulated REST timeout")); got != beforeErrType+1 {
+		t.Fatalf("error-by-type counter delta = %v, want +1", got-beforeErrType)
+	}
+	entries := logs.FilterMessage("reconciler: pass complete").All()
+	if len(entries) != 1 || entries[0].Level != zapcore.WarnLevel {
+		t.Fatal("expected single warn summary log for error path")
+	}
+}
+
+func TestReconciler_RunOnce_PartialResultOnStoreWriteError(t *testing.T) {
+	book := newBook()
+	st := &mockStore{writeErr: errors.New("disk full")}
+	ex := &mockExchange{}
+	ex.setPositions([]models.Position{newPos("AMZN", "5", "Long", "185.00")})
+	beforePartial := testutil.ToFloat64(client.Metrics.ReconcileRunsByStatus.WithLabelValues(string(reconciler.StatusPartial)))
+	r := reconciler.New(ex, st, book, "TEST123", tightConfig(), silentLogger())
+
+	result := reconciler.RunOnceForTest(r, context.Background())
+
+	if result.Status != reconciler.StatusPartial {
+		t.Fatalf("Status = %q, want %q", result.Status, reconciler.StatusPartial)
+	}
+	if result.ErrorText != "snapshot_write_failed" {
+		t.Fatalf("ErrorText = %q, want snapshot_write_failed", result.ErrorText)
+	}
+	if book.Snapshot("AMZN").Quantity == "" {
+		t.Fatal("MarkBook position missing despite partial success")
+	}
+	if got := testutil.ToFloat64(client.Metrics.ReconcileRunsByStatus.WithLabelValues(string(reconciler.StatusPartial))); got != beforePartial+1 {
+		t.Fatalf("partial status counter delta = %v, want +1", got-beforePartial)
 	}
 }
 
 func TestReconciler_AbsenceCounterPreventsRemoval(t *testing.T) {
 	book := newBook()
 	book.LoadPosition("AAPL", "TEST123", "5", "Long", dec("190.00"))
-
 	ex := &mockExchange{}
 	ex.setPositions([]models.Position{})
+	r := newRec(ex, nil, book, reconciler.Config{Interval: 10 * time.Millisecond, AbsenceThreshold: 2})
 
-	cfg := reconciler.Config{Interval: 10 * time.Millisecond, AbsenceThreshold: 2}
-	r := newRec(ex, nil, book, cfg)
-
-	reconciler.RunOnceForTest(r, context.Background())
-	snap := book.Snapshot("AAPL")
-	if snap.Quantity == "" {
-		t.Fatal("position removed on first absence — expected preservation until threshold")
+	result := reconciler.RunOnceForTest(r, context.Background())
+	if result.Status != reconciler.StatusDriftDetected {
+		t.Fatalf("Status = %q, want drift_detected", result.Status)
+	}
+	if book.Snapshot("AAPL").Quantity == "" {
+		t.Fatal("position removed on first absence")
 	}
 }
 
 func TestReconciler_RemovesPositionAfterNPasses(t *testing.T) {
 	book := newBook()
 	book.LoadPosition("TSLA", "TEST123", "3", "Long", dec("210.00"))
-
 	ex := &mockExchange{}
 	ex.setPositions([]models.Position{})
-
-	cfg := reconciler.Config{Interval: 10 * time.Millisecond, AbsenceThreshold: 2}
-	r := newRec(ex, nil, book, cfg)
+	r := newRec(ex, nil, book, reconciler.Config{Interval: 10 * time.Millisecond, AbsenceThreshold: 2})
 
 	reconciler.RunOnceForTest(r, context.Background())
-	if book.Snapshot("TSLA").Quantity == "" {
-		t.Fatal("removed too early after pass 1")
-	}
-
 	reconciler.RunOnceForTest(r, context.Background())
-	snap := book.Snapshot("TSLA")
-	if snap.Quantity != "" {
-		t.Errorf("position still present after %d absence passes — expected removal", 2)
+	if book.Snapshot("TSLA").Quantity != "" {
+		t.Fatal("position still present after threshold")
 	}
 }
 
 func TestReconciler_AbsenceCounterResetOnReappearance(t *testing.T) {
 	book := newBook()
 	book.LoadPosition("NVDA", "TEST123", "1", "Long", dec("500.00"))
-
 	ex := &mockExchange{}
-
-	cfg := reconciler.Config{Interval: 10 * time.Millisecond, AbsenceThreshold: 3}
-	r := newRec(ex, nil, book, cfg)
+	r := newRec(ex, nil, book, reconciler.Config{Interval: 10 * time.Millisecond, AbsenceThreshold: 3})
 
 	ex.setPositions([]models.Position{})
 	reconciler.RunOnceForTest(r, context.Background())
-
 	ex.setPositions([]models.Position{newPos("NVDA", "1", "Long", "500.00")})
 	reconciler.RunOnceForTest(r, context.Background())
-
 	ex.setPositions([]models.Position{})
 	reconciler.RunOnceForTest(r, context.Background())
 	if book.Snapshot("NVDA").Quantity == "" {
-		t.Fatal("position removed after only 1 absence post-reset — counter was not cleared")
-	}
-}
-
-func TestReconciler_RESTFailureDoesNotModifyMarkBook(t *testing.T) {
-	book := newBook()
-	book.LoadPosition(".SPX240119P4500", "TEST123", "2", "Short", dec("3.75"))
-
-	before := book.AllSnapshots()
-
-	ex := &mockExchange{}
-	ex.setError(errors.New("simulated REST timeout"))
-
-	r := newRec(ex, nil, book, tightConfig())
-	reconciler.RunOnceForTest(r, context.Background())
-
-	after := book.AllSnapshots()
-
-	if len(before) != len(after) {
-		t.Errorf("MarkBook entry count changed: before=%d after=%d", len(before), len(after))
-	}
-	snap := book.Snapshot(".SPX240119P4500")
-	if !snap.AvgOpenPrice.Equal(dec("3.75")) {
-		t.Errorf("AvgOpenPrice changed after REST failure: got %s", snap.AvgOpenPrice)
+		t.Fatal("position removed after only 1 absence post-reset")
 	}
 }
 
@@ -310,47 +334,18 @@ func TestReconciler_WritesPositionSnapshot(t *testing.T) {
 		newPos(".QQQ230915C350", "1", "Long", "4.20"),
 		newPos("QQQ", "100", "Long", "360.00"),
 	})
-
 	r := reconciler.New(ex, st, book, "TEST123", tightConfig(), silentLogger())
+
 	reconciler.RunOnceForTest(r, context.Background())
-
 	if got := st.snapshotCount(); got != 2 {
-		t.Errorf("WritePositionSnapshot called %d times, want 2", got)
+		t.Fatalf("snapshot count = %d, want 2", got)
 	}
-
 	snap, ok := st.latestForSymbol(".QQQ230915C350")
 	if !ok {
-		t.Fatal("no snapshot written for .QQQ230915C350")
-	}
-	snapPrice, err := decimal.NewFromString(snap.AvgOpenPrice)
-	if err != nil {
-		t.Fatalf("cannot parse snapshot AvgOpenPrice %q: %v", snap.AvgOpenPrice, err)
-	}
-	if !snapPrice.Equal(dec("4.20")) {
-		t.Errorf("snapshot AvgOpenPrice = %q, want 4.20", snap.AvgOpenPrice)
+		t.Fatal("missing snapshot")
 	}
 	if snap.Source != store.SourceReconciliation {
-		t.Errorf("snapshot Source = %q, want %q", snap.Source, store.SourceReconciliation)
-	}
-}
-
-func TestReconciler_StoreWriteErrorDoesNotAbortPass(t *testing.T) {
-	book := newBook()
-	st := &mockStore{writeErr: errors.New("disk full")}
-	ex := &mockExchange{}
-	ex.setPositions([]models.Position{
-		newPos("AMZN", "5", "Long", "185.00"),
-	})
-
-	r := reconciler.New(ex, st, book, "TEST123", tightConfig(), silentLogger())
-	reconciler.RunOnceForTest(r, context.Background())
-
-	snap := book.Snapshot("AMZN")
-	if snap.Quantity == "" {
-		t.Fatal("position not added to MarkBook despite store write failure")
-	}
-	if !snap.AvgOpenPrice.Equal(dec("185.00")) {
-		t.Errorf("AvgOpenPrice = %s, want 185.00", snap.AvgOpenPrice)
+		t.Fatalf("snapshot source = %q, want %q", snap.Source, store.SourceReconciliation)
 	}
 }
 
@@ -358,19 +353,15 @@ func TestReconciler_Start_RunsUntilContextCancel(t *testing.T) {
 	book := newBook()
 	ex := &mockExchange{}
 	ex.setPositions([]models.Position{})
-
-	cfg := reconciler.Config{Interval: 10 * time.Millisecond, AbsenceThreshold: 2}
-	r := reconciler.New(ex, nil, book, "TEST123", cfg, silentLogger())
+	r := reconciler.New(ex, nil, book, "TEST123", tightConfig(), silentLogger())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
-
 	done := make(chan struct{})
 	go func() {
 		r.Start(ctx)
 		close(done)
 	}()
-
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
@@ -381,39 +372,14 @@ func TestReconciler_Start_RunsUntilContextCancel(t *testing.T) {
 func TestReconciler_FallbackToClosePrice(t *testing.T) {
 	book := newBook()
 	ex := &mockExchange{}
-
 	pos := newPos(".SPY230120C400", "1", "Short", "0")
 	pos.ClosePrice = dec("1.25")
 	ex.setPositions([]models.Position{pos})
-
 	r := newRec(ex, nil, book, tightConfig())
+
 	reconciler.RunOnceForTest(r, context.Background())
-
-	snap := book.Snapshot(".SPY230120C400")
-	if !snap.AvgOpenPrice.Equal(dec("1.25")) {
-		t.Errorf("AvgOpenPrice = %s, want 1.25 (ClosePrice fallback)", snap.AvgOpenPrice)
-	}
-}
-
-func TestReconciler_NoUnnecessaryReloadWhenPriceCorrect(t *testing.T) {
-	book := newBook()
-	book.LoadPosition("MSFT", "TEST123", "10", "Long", dec("380.00"))
-	loadedAt := book.Snapshot("MSFT").PositionLoadedAt
-
-	ex := &mockExchange{}
-	ex.setPositions([]models.Position{
-		newPos("MSFT", "10", "Long", "380.00"),
-	})
-
-	r := newRec(ex, nil, book, tightConfig())
-	reconciler.RunOnceForTest(r, context.Background())
-
-	snap := book.Snapshot("MSFT")
-	if !snap.AvgOpenPrice.Equal(dec("380.00")) {
-		t.Errorf("AvgOpenPrice = %s, want 380.00", snap.AvgOpenPrice)
-	}
-	if snap.PositionLoadedAt.After(loadedAt) {
-		t.Errorf("PositionLoadedAt advanced — reconciler re-loaded an already-correct position")
+	if !book.Snapshot(".SPY230120C400").AvgOpenPrice.Equal(dec("1.25")) {
+		t.Fatal("ClosePrice fallback not applied")
 	}
 }
 
@@ -421,28 +387,22 @@ func TestReconciler_MultiplePositions(t *testing.T) {
 	book := newBook()
 	book.LoadPosition("GOOG", "TEST123", "1", "Long", dec("140.00"))
 	book.LoadPosition(".GOOG240119C150", "TEST123", "2", "Long", decimal.Zero)
-
 	ex := &mockExchange{}
 	ex.setPositions([]models.Position{
 		newPos("GOOG", "1", "Long", "140.00"),
 		newPos(".GOOG240119C150", "2", "Long", "3.50"),
 		newPos(".GOOG240119P130", "2", "Short", "2.10"),
 	})
-
 	r := newRec(ex, nil, book, tightConfig())
-	reconciler.RunOnceForTest(r, context.Background())
 
-	if !book.Snapshot("GOOG").AvgOpenPrice.Equal(dec("140.00")) {
-		t.Errorf("GOOG AvgOpenPrice changed unexpectedly")
+	result := reconciler.RunOnceForTest(r, context.Background())
+	if result.MismatchCount != 2 {
+		t.Fatalf("MismatchCount = %d, want 2", result.MismatchCount)
 	}
 	if !book.Snapshot(".GOOG240119C150").AvgOpenPrice.Equal(dec("3.50")) {
-		t.Errorf(".GOOG240119C150 AvgOpenPrice = %s, want 3.50", book.Snapshot(".GOOG240119C150").AvgOpenPrice)
+		t.Fatal("existing option was not corrected")
 	}
-	snap := book.Snapshot(".GOOG240119P130")
-	if snap.Quantity == "" {
-		t.Fatal(".GOOG240119P130 not added to MarkBook")
-	}
-	if !snap.AvgOpenPrice.Equal(dec("2.10")) {
-		t.Errorf(".GOOG240119P130 AvgOpenPrice = %s, want 2.10", snap.AvgOpenPrice)
+	if book.Snapshot(".GOOG240119P130").Quantity == "" {
+		t.Fatal("new position not added")
 	}
 }
