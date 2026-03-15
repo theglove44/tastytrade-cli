@@ -71,3 +71,5 @@ Examples:
   - final fail-closed pre-submit policy boundary for live order transmission
 - `MI-2026-03-15-phase3c-duplicate-submit-protection.md`
   - minimal fail-closed duplicate-submit protection for approved live order intents
+- `MI-2026-03-15-phase3c-approval-expiry-and-stale-submit-protection.md`
+  - fail-closed freshness policy for approval and confirmation at the live submit boundary

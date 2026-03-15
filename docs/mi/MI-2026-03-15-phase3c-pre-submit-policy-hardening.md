@@ -49,8 +49,9 @@ It now fail-closes live submit unless all of the following are true at the final
 - transport is explicitly approved for live submit
 - safety check result succeeded
 - decision gate is available and not blocked
-- explicit confirmation exists and is acknowledged
-- confirmation is bound to the same intent ID
+- approval state exists and is fresh
+- explicit confirmation exists, is acknowledged, and is fresh
+- confirmation is bound to the same approved intent ID
 - confirmation is bound to the same canonical order payload hash
 - current order payload still matches the approved payload hash
 

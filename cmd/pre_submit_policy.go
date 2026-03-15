@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"go.uber.org/zap"
 
@@ -29,21 +30,42 @@ const (
 	DenySafetyCheckFailed       PreSubmitDenyReason = "safety_check_failed"
 	DenyDecisionGateUnavailable PreSubmitDenyReason = "decision_gate_unavailable"
 	DenyDecisionGateDenied      PreSubmitDenyReason = "decision_gate_denied"
+	DenyApprovalMissing         PreSubmitDenyReason = "approval_missing"
+	DenyApprovalExpired         PreSubmitDenyReason = "approval_expired"
 	DenyConfirmationMissing     PreSubmitDenyReason = "confirmation_missing"
 	DenyConfirmationDeclined    PreSubmitDenyReason = "confirmation_declined"
+	DenyConfirmationExpired     PreSubmitDenyReason = "confirmation_expired"
+	DenyTimeStateInvalid        PreSubmitDenyReason = "time_state_invalid"
 	DenyIntentMismatch          PreSubmitDenyReason = "intent_mismatch"
 	DenyPayloadMismatch         PreSubmitDenyReason = "payload_mismatch"
 )
 
+var (
+	preSubmitPolicyNow = func() time.Time { return time.Now().UTC() }
+	maxApprovalAge     = 2 * time.Minute
+	maxConfirmationAge = 2 * time.Minute
+)
+
+// SubmitApproval captures the approved live-submit state bound to a specific
+// account, intent, and canonical payload fingerprint.
+type SubmitApproval struct {
+	Action     string    `json:"action"`
+	AccountID  string    `json:"account_id"`
+	IntentID   string    `json:"intent_id"`
+	OrderHash  string    `json:"order_hash"`
+	ApprovedAt time.Time `json:"approved_at"`
+}
+
 // SubmitConfirmation captures the explicit acknowledgement bound to a specific
 // live-submit intent and order payload fingerprint.
 type SubmitConfirmation struct {
-	Action         string `json:"action"`
-	AccountID      string `json:"account_id"`
-	IntentID       string `json:"intent_id"`
-	OrderHash      string `json:"order_hash"`
-	Acknowledged   bool   `json:"acknowledged"`
-	NonInteractive bool   `json:"non_interactive"`
+	Action         string    `json:"action"`
+	AccountID      string    `json:"account_id"`
+	IntentID       string    `json:"intent_id"`
+	OrderHash      string    `json:"order_hash"`
+	Acknowledged   bool      `json:"acknowledged"`
+	NonInteractive bool      `json:"non_interactive"`
+	ConfirmedAt    time.Time `json:"confirmed_at"`
 }
 
 // PreSubmitPolicyInput is the exact state the final live-submit boundary must validate.
@@ -53,9 +75,12 @@ type PreSubmitPolicyInput struct {
 	IntentID          string
 	Order             models.NewOrder
 	OrderHash         string
+	ApprovedAt        time.Time
+	Now               time.Time
 	SafetyErr         error
 	DecisionView      decisionGateView
 	DecisionErr       error
+	Approval          *SubmitApproval
 	Confirmation      *SubmitConfirmation
 	TransportApproved bool
 }
@@ -96,6 +121,14 @@ func EvaluatePreSubmitPolicy(in PreSubmitPolicyInput) PreSubmitPolicyResult {
 		result.DenyReasons = append(result.DenyReasons, reason)
 	}
 
+	now := in.Now
+	if now.IsZero() {
+		now = preSubmitPolicyNow()
+	}
+	if now.IsZero() {
+		deny(DenyTimeStateInvalid)
+	}
+
 	if in.Config == nil {
 		deny(DenyUnknownState)
 		return result
@@ -124,6 +157,33 @@ func EvaluatePreSubmitPolicy(in PreSubmitPolicyInput) PreSubmitPolicyResult {
 	if in.DecisionErr != nil || in.DecisionView.Decision.Outcome == reconciler.GateBlock {
 		deny(DenyDecisionGateDenied)
 	}
+
+	if in.Approval == nil {
+		deny(DenyApprovalMissing)
+	} else {
+		if strings.TrimSpace(in.Approval.IntentID) == "" || strings.TrimSpace(in.Approval.OrderHash) == "" {
+			deny(DenyUnknownState)
+		}
+		if in.Approval.AccountID != in.AccountID {
+			deny(DenyAccountMismatch)
+		}
+		if in.Approval.IntentID != in.IntentID {
+			deny(DenyIntentMismatch)
+		}
+		if in.Approval.OrderHash != in.OrderHash {
+			deny(DenyPayloadMismatch)
+		}
+		if in.Approval.ApprovedAt.IsZero() || in.ApprovedAt.IsZero() {
+			deny(DenyApprovalMissing)
+		} else if in.Approval.ApprovedAt != in.ApprovedAt {
+			deny(DenyTimeStateInvalid)
+		} else if in.ApprovedAt.After(now) {
+			deny(DenyTimeStateInvalid)
+		} else if now.Sub(in.ApprovedAt) > maxApprovalAge {
+			deny(DenyApprovalExpired)
+		}
+	}
+
 	if in.Confirmation == nil {
 		deny(DenyConfirmationMissing)
 	} else {
@@ -141,6 +201,15 @@ func EvaluatePreSubmitPolicy(in PreSubmitPolicyInput) PreSubmitPolicyResult {
 		}
 		if in.Confirmation.OrderHash != in.OrderHash {
 			deny(DenyPayloadMismatch)
+		}
+		if in.Confirmation.ConfirmedAt.IsZero() {
+			deny(DenyConfirmationMissing)
+		} else if in.Confirmation.ConfirmedAt.After(now) {
+			deny(DenyTimeStateInvalid)
+		} else if now.Sub(in.Confirmation.ConfirmedAt) > maxConfirmationAge {
+			deny(DenyConfirmationExpired)
+		} else if !in.ApprovedAt.IsZero() && in.Confirmation.ConfirmedAt.Before(in.ApprovedAt) {
+			deny(DenyTimeStateInvalid)
 		}
 	}
 

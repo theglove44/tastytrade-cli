@@ -3,6 +3,7 @@ package cmd
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/theglove44/tastytrade-cli/config"
 	"github.com/theglove44/tastytrade-cli/internal/models"
@@ -32,6 +33,9 @@ func testPolicyInput(t *testing.T) PreSubmitPolicyInput {
 	if err != nil {
 		t.Fatalf("canonicalOrderHash: %v", err)
 	}
+	now := time.Date(2026, 3, 15, 12, 0, 0, 0, time.UTC)
+	approvedAt := now.Add(-30 * time.Second)
+	confirmedAt := now.Add(-10 * time.Second)
 	return PreSubmitPolicyInput{
 		Config: &config.Config{
 			BaseURL:            config.ProdBaseURL,
@@ -44,10 +48,12 @@ func testPolicyInput(t *testing.T) PreSubmitPolicyInput {
 			APIVersion:         "",
 			AccountStreamerURL: config.AccountStreamerURL,
 		},
-		AccountID: "TEST123",
-		IntentID:  "intent-1",
-		Order:     order,
-		OrderHash: hash,
+		AccountID:  "TEST123",
+		IntentID:   "intent-1",
+		Order:      order,
+		OrderHash:  hash,
+		ApprovedAt: approvedAt,
+		Now:        now,
 		DecisionView: decisionGateView{
 			Available: true,
 			Action:    "submit",
@@ -57,12 +63,20 @@ func testPolicyInput(t *testing.T) PreSubmitPolicyInput {
 				ReconcilePolicy: reconciler.HandlingObserve,
 			},
 		},
+		Approval: &SubmitApproval{
+			Action:     "submit",
+			AccountID:  "TEST123",
+			IntentID:   "intent-1",
+			OrderHash:  hash,
+			ApprovedAt: approvedAt,
+		},
 		Confirmation: &SubmitConfirmation{
 			Action:       "submit",
 			AccountID:    "TEST123",
 			IntentID:     "intent-1",
 			OrderHash:    hash,
 			Acknowledged: true,
+			ConfirmedAt:  confirmedAt,
 		},
 		TransportApproved: true,
 	}
@@ -127,6 +141,52 @@ func TestEvaluatePreSubmitPolicy_DeniesWhenDecisionBlocked(t *testing.T) {
 	result := EvaluatePreSubmitPolicy(in)
 	if result.Allowed || !hasReason(result, DenyDecisionGateDenied) {
 		t.Fatalf("result = %+v, want decision denial", result)
+	}
+}
+
+func TestEvaluatePreSubmitPolicy_FreshApprovalAndConfirmationAllowed(t *testing.T) {
+	result := EvaluatePreSubmitPolicy(testPolicyInput(t))
+	if !result.Allowed {
+		t.Fatalf("result = %+v, want allowed", result)
+	}
+}
+
+func TestEvaluatePreSubmitPolicy_ExpiredApprovalDenied(t *testing.T) {
+	in := testPolicyInput(t)
+	in.ApprovedAt = in.Now.Add(-maxApprovalAge - time.Second)
+	in.Approval.ApprovedAt = in.ApprovedAt
+	result := EvaluatePreSubmitPolicy(in)
+	if result.Allowed || !hasReason(result, DenyApprovalExpired) {
+		t.Fatalf("result = %+v, want expired approval denial", result)
+	}
+}
+
+func TestEvaluatePreSubmitPolicy_ExpiredConfirmationDenied(t *testing.T) {
+	in := testPolicyInput(t)
+	in.Confirmation.ConfirmedAt = in.Now.Add(-maxConfirmationAge - time.Second)
+	result := EvaluatePreSubmitPolicy(in)
+	if result.Allowed || !hasReason(result, DenyConfirmationExpired) {
+		t.Fatalf("result = %+v, want expired confirmation denial", result)
+	}
+}
+
+func TestEvaluatePreSubmitPolicy_MissingTimestampsDenied(t *testing.T) {
+	in := testPolicyInput(t)
+	in.ApprovedAt = time.Time{}
+	in.Approval.ApprovedAt = time.Time{}
+	in.Confirmation.ConfirmedAt = time.Time{}
+	result := EvaluatePreSubmitPolicy(in)
+	if result.Allowed || !hasReason(result, DenyApprovalMissing) || !hasReason(result, DenyConfirmationMissing) {
+		t.Fatalf("result = %+v, want missing timestamp denial", result)
+	}
+}
+
+func TestEvaluatePreSubmitPolicy_InvalidTimeStateDenied(t *testing.T) {
+	in := testPolicyInput(t)
+	in.Now = time.Time{}
+	result := EvaluatePreSubmitPolicy(in)
+	if result.Allowed || !hasReason(result, DenyTimeStateInvalid) {
+		t.Fatalf("result = %+v, want invalid time-state denial", result)
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
@@ -107,7 +108,7 @@ The order payload must be passed as a JSON file:
 The JSON shape is identical to tt dry-run. Consider validating with dry-run first.
 
 Live submit is fail-closed behind the full safety chain:
-  live mode -> order safety -> reconcile decision gate -> operator confirmation -> final pre-submit policy -> duplicate-submit protection.
+  live mode -> order safety -> reconcile decision gate -> operator confirmation -> final pre-submit policy/freshness -> duplicate-submit protection.
 
 In --json mode, --yes is required to acknowledge live submission non-interactively.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -164,7 +165,11 @@ func runSubmit(ctx context.Context) error {
 		return err
 	}
 	idemKey := uuid.NewString()
-	confirmation, err := confirmLiveSubmit(accountID, order, idemKey)
+	approval, err := approveLiveSubmit(accountID, order, idemKey)
+	if err != nil {
+		return err
+	}
+	confirmation, err := confirmLiveSubmit(approval, order)
 	if err != nil {
 		return err
 	}
@@ -174,10 +179,13 @@ func runSubmit(ctx context.Context) error {
 		AccountID:         accountID,
 		IntentID:          idemKey,
 		Order:             order,
-		OrderHash:         confirmation.OrderHash,
+		OrderHash:         approval.OrderHash,
+		ApprovedAt:        approval.ApprovedAt,
+		Now:               preSubmitPolicyNow(),
 		SafetyErr:         safetyErr,
 		DecisionView:      gateView,
 		DecisionErr:       gateErr,
+		Approval:          approval,
 		Confirmation:      confirmation,
 		TransportApproved: isApprovedLiveSubmitTransport(ex, cfg),
 	})
@@ -190,7 +198,7 @@ func runSubmit(ctx context.Context) error {
 		return fmt.Errorf("submit blocked by pre-submit policy: %s", strings.Join(reasons, ","))
 	}
 
-	identity, err := deriveSubmitIdentity(accountID, idemKey, confirmation.OrderHash)
+	identity, err := deriveSubmitIdentity(accountID, idemKey, approval.OrderHash)
 	if err != nil {
 		return fmt.Errorf("submit blocked by duplicate-submit policy: %s", DuplicateSubmitUnknownState)
 	}
@@ -377,16 +385,29 @@ func runDryRun(ctx context.Context) error {
 	return nil
 }
 
-func confirmLiveSubmit(accountID string, order models.NewOrder, intentID string) (*SubmitConfirmation, error) {
+func approveLiveSubmit(accountID string, order models.NewOrder, intentID string) (*SubmitApproval, error) {
 	orderHash, err := canonicalOrderHash(order)
 	if err != nil {
-		return nil, fmt.Errorf("submit confirmation failed: %w", err)
+		return nil, fmt.Errorf("submit approval failed: %w", err)
+	}
+	return &SubmitApproval{
+		Action:     "submit",
+		AccountID:  accountID,
+		IntentID:   intentID,
+		OrderHash:  orderHash,
+		ApprovedAt: preSubmitPolicyNow(),
+	}, nil
+}
+
+func confirmLiveSubmit(approval *SubmitApproval, order models.NewOrder) (*SubmitConfirmation, error) {
+	if approval == nil {
+		return nil, fmt.Errorf("submit confirmation failed: missing approval state")
 	}
 	confirmation := &SubmitConfirmation{
-		Action:    "submit",
-		AccountID: accountID,
-		IntentID:  intentID,
-		OrderHash: orderHash,
+		Action:    approval.Action,
+		AccountID: approval.AccountID,
+		IntentID:  approval.IntentID,
+		OrderHash: approval.OrderHash,
 	}
 	if flagJSON {
 		if !flagSubmitYes {
@@ -394,13 +415,14 @@ func confirmLiveSubmit(accountID string, order models.NewOrder, intentID string)
 		}
 		confirmation.Acknowledged = true
 		confirmation.NonInteractive = true
+		confirmation.ConfirmedAt = preSubmitPolicyNow()
 		return confirmation, nil
 	}
 
 	fmt.Println("LIVE ORDER SUBMISSION")
 	fmt.Println("This will submit a live order to tastytrade.")
-	fmt.Printf("  Account:       %s\n", accountID)
-	fmt.Printf("  Intent ID:     %s\n", intentID)
+	fmt.Printf("  Account:       %s\n", approval.AccountID)
+	fmt.Printf("  Intent ID:     %s\n", approval.IntentID)
 	fmt.Printf("  Type:          %s\n", order.OrderType)
 	fmt.Printf("  Time In Force: %s\n", order.TimeInForce)
 	if order.Price != "" || order.PriceEffect != "" {
@@ -410,6 +432,7 @@ func confirmLiveSubmit(accountID string, order models.NewOrder, intentID string)
 	for i, leg := range order.Legs {
 		fmt.Printf("    %d. %s %s x%d (%s)\n", i+1, leg.Action, leg.Symbol, leg.Quantity, leg.InstrumentType)
 	}
+	fmt.Printf("  Approved At:   %s\n", approval.ApprovedAt.Format(time.RFC3339))
 	fmt.Print("Type 'submit' to confirm live order submission: ")
 
 	reader := bufio.NewReader(submitConfirmIn)
@@ -422,6 +445,7 @@ func confirmLiveSubmit(accountID string, order models.NewOrder, intentID string)
 		return nil, fmt.Errorf("submit aborted: operator declined confirmation")
 	}
 	confirmation.Acknowledged = true
+	confirmation.ConfirmedAt = preSubmitPolicyNow()
 	return confirmation, nil
 }
 
