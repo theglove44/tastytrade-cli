@@ -57,3 +57,5 @@ Examples:
   - investigation and fix for live quote metric staying at zero due to DXLink symbol format mismatch
 - `MI-2026-03-13-phase3a-reconcile-outcome-policy.md`
   - conservative operational handling policy for reconciler outcomes and watch heartbeat policy state
+- `MI-2026-03-15-phase3a-closeout.md`
+  - branch closeout, docs hygiene, stray artifact cleanup, and Phase 3B handoff recommendation

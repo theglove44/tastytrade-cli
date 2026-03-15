@@ -20,9 +20,9 @@ import (
 // mockStore is a no-op Store for handler tests that don't need persistence.
 type mockStore struct{ store.Store }
 
-func (m *mockStore) WriteFill(_ context.Context, _ store.FillRecord) error   { return nil }
+func (m *mockStore) WriteFill(_ context.Context, _ store.FillRecord) error       { return nil }
 func (m *mockStore) WriteBalance(_ context.Context, _ store.BalanceRecord) error { return nil }
-func (m *mockStore) Close() error                                              { return nil }
+func (m *mockStore) Close() error                                                { return nil }
 
 // mockMarketStreamer records Subscribe calls and implements MarketStreamer.
 type mockMarketStreamer struct {
@@ -30,8 +30,8 @@ type mockMarketStreamer struct {
 	symbols []string
 }
 
-func (m *mockMarketStreamer) Start(_ context.Context) error  { return context.Canceled }
-func (m *mockMarketStreamer) Name() string                   { return "market" }
+func (m *mockMarketStreamer) Start(_ context.Context) error   { return context.Canceled }
+func (m *mockMarketStreamer) Name() string                    { return "market" }
 func (m *mockMarketStreamer) Status() streamer.StreamerStatus { return streamer.StreamerStatus{} }
 
 func (m *mockMarketStreamer) Subscribe(symbols ...string) {
@@ -96,7 +96,7 @@ func newAccountEventHandlerForCmdTest(
 	return &testableHandler{st: st, book: book, mktStreamer: mkt, log: log}
 }
 
-func (h *testableHandler) OnOrderEvent(_ models.OrderEvent)   {}
+func (h *testableHandler) OnOrderEvent(_ models.OrderEvent)     {}
 func (h *testableHandler) OnBalanceEvent(_ models.BalanceEvent) {}
 
 func (h *testableHandler) OnPositionEvent(ev models.PositionEvent) {
@@ -447,5 +447,3 @@ func zapDev(t *testing.T) *zap.Logger {
 	log, _ := zap.NewDevelopment()
 	return log
 }
-
-
