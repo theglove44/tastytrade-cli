@@ -14,6 +14,7 @@ import (
 
 	"github.com/theglove44/tastytrade-cli/config"
 	"github.com/theglove44/tastytrade-cli/internal/client"
+	exchange "github.com/theglove44/tastytrade-cli/internal/exchange"
 	"github.com/theglove44/tastytrade-cli/internal/models"
 	"github.com/theglove44/tastytrade-cli/internal/reconciler"
 )
@@ -115,15 +116,17 @@ func setupDecisionGateCommandTest(t *testing.T) (*gateTestExchange, *observer.Ob
 	origFlagJSON, origReadFile := flagJSON, readFile
 	origFlagSubmitFile, origFlagSubmitYes, origFlagDryRunFile := flagSubmitFile, flagSubmitYes, flagDryRunFile
 	origSubmitConfirmIn := submitConfirmIn
+	origTransportApproval := isApprovedLiveSubmitTransport
 	t.Cleanup(func() {
 		cfg, cl, ex, rec, logger = origCfg, origCl, origEx, origRec, origLogger
 		flagJSON, readFile = origFlagJSON, origReadFile
 		flagSubmitFile, flagSubmitYes, flagDryRunFile = origFlagSubmitFile, origFlagSubmitYes, origFlagDryRunFile
 		submitConfirmIn = origSubmitConfirmIn
+		isApprovedLiveSubmitTransport = origTransportApproval
 	})
 
 	t.Setenv("HOME", t.TempDir())
-	cfg = &config.Config{AccountID: "TEST123", RateLimits: config.DefaultRateLimits()}
+	cfg = &config.Config{BaseURL: config.ProdBaseURL, AccountID: "TEST123", RateLimits: config.DefaultRateLimits()}
 	log, logs := observedDecisionGateLogger()
 	logger = log
 	cl = client.New(cfg, logger)
@@ -136,6 +139,7 @@ func setupDecisionGateCommandTest(t *testing.T) (*gateTestExchange, *observer.Ob
 	readFile = func(string) ([]byte, error) {
 		return []byte(`{"order-type":"Limit","time-in-force":"Day","price":"1.00","price-effect":"Debit","legs":[{"instrument-type":"Equity","symbol":"AAPL","quantity":1,"action":"Buy to Open"}]}`), nil
 	}
+	isApprovedLiveSubmitTransport = func(_ exchange.Exchange, _ *config.Config) bool { return true }
 	return ex.(*gateTestExchange), logs
 }
 

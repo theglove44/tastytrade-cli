@@ -67,3 +67,7 @@ Examples:
   - first minimal live-submit command reusing safety checks, decision gating, and intent logging
 - `MI-2026-03-15-live-submit-operator-confirmation.md`
   - explicit human confirmation and JSON-mode acknowledgement for live order submission
+- `MI-2026-03-15-phase3c-pre-submit-policy-hardening.md`
+  - final fail-closed pre-submit policy boundary for live order transmission
+- `MI-2026-03-15-phase3c-duplicate-submit-protection.md`
+  - minimal fail-closed duplicate-submit protection for approved live order intents
