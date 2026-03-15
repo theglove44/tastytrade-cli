@@ -175,3 +175,79 @@ func TestCurrentWatchReconcileStatus_NoRunYet(t *testing.T) {
 		t.Fatalf("Status = %q, want not_yet_available", view.Status)
 	}
 }
+
+func TestLogWatchDecisionGate_OK(t *testing.T) {
+	log, logs := observedWatchLogger(zapcore.InfoLevel)
+	logWatchDecisionGate(log, &stubReconciler{ok: true, latest: reconciler.Result{Status: reconciler.StatusOK}})
+	entries := logs.FilterMessage("tt watch decision gate").All()
+	if len(entries) != 1 {
+		t.Fatalf("log count = %d, want 1", len(entries))
+	}
+	ctx := entries[0].ContextMap()
+	if ctx["gate_outcome"] != "allowed" {
+		t.Fatalf("gate_outcome = %v, want allowed", ctx["gate_outcome"])
+	}
+	if ctx["reconcile_status"] != "ok" {
+		t.Fatalf("reconcile_status = %v, want ok", ctx["reconcile_status"])
+	}
+	if ctx["reconcile_policy"] != "observe" {
+		t.Fatalf("reconcile_policy = %v, want observe", ctx["reconcile_policy"])
+	}
+}
+
+func TestLogWatchDecisionGate_DriftWarns(t *testing.T) {
+	log, logs := observedWatchLogger(zapcore.InfoLevel)
+	logWatchDecisionGate(log, &stubReconciler{ok: true, latest: reconciler.Result{Status: reconciler.StatusDriftDetected}})
+	entries := logs.FilterMessage("tt watch decision gate").All()
+	if len(entries) != 1 {
+		t.Fatalf("log count = %d, want 1", len(entries))
+	}
+	ctx := entries[0].ContextMap()
+	if ctx["gate_outcome"] != "allowed_with_warning" {
+		t.Fatalf("gate_outcome = %v, want allowed_with_warning", ctx["gate_outcome"])
+	}
+	if ctx["reconcile_status"] != "drift_detected" {
+		t.Fatalf("reconcile_status = %v, want drift_detected", ctx["reconcile_status"])
+	}
+}
+
+func TestLogWatchDecisionGate_PartialWarns(t *testing.T) {
+	log, logs := observedWatchLogger(zapcore.InfoLevel)
+	logWatchDecisionGate(log, &stubReconciler{ok: true, latest: reconciler.Result{Status: reconciler.StatusPartial}})
+	entries := logs.FilterMessage("tt watch decision gate").All()
+	if len(entries) != 1 {
+		t.Fatalf("log count = %d, want 1", len(entries))
+	}
+	ctx := entries[0].ContextMap()
+	if ctx["gate_outcome"] != "allowed_with_warning" {
+		t.Fatalf("gate_outcome = %v, want allowed_with_warning", ctx["gate_outcome"])
+	}
+	if ctx["reconcile_status"] != "partial" {
+		t.Fatalf("reconcile_status = %v, want partial", ctx["reconcile_status"])
+	}
+	if ctx["suppress_confidence_actions"] != false {
+		t.Fatalf("suppress_confidence_actions = %v, want false", ctx["suppress_confidence_actions"])
+	}
+}
+
+func TestLogWatchDecisionGate_ErrorBlocks(t *testing.T) {
+	log, logs := observedWatchLogger(zapcore.InfoLevel)
+	logWatchDecisionGate(log, &stubReconciler{ok: true, latest: reconciler.Result{Status: reconciler.StatusError}})
+	entries := logs.FilterMessage("tt watch decision gate").All()
+	if len(entries) != 1 {
+		t.Fatalf("log count = %d, want 1", len(entries))
+	}
+	ctx := entries[0].ContextMap()
+	if ctx["gate_outcome"] != "blocked" {
+		t.Fatalf("gate_outcome = %v, want blocked", ctx["gate_outcome"])
+	}
+	if ctx["reconcile_status"] != "error" {
+		t.Fatalf("reconcile_status = %v, want error", ctx["reconcile_status"])
+	}
+	if ctx["reconcile_policy"] != "suppress" {
+		t.Fatalf("reconcile_policy = %v, want suppress", ctx["reconcile_policy"])
+	}
+	if ctx["suppress_confidence_actions"] != true {
+		t.Fatalf("suppress_confidence_actions = %v, want true", ctx["suppress_confidence_actions"])
+	}
+}

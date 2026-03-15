@@ -189,6 +189,42 @@ func (e *Exchange) DryRun(ctx context.Context, accountID string, order models.Ne
 	return env.Data, nil
 }
 
+// Submit routes a live order to /orders using the exact same payload shape as
+// dry-run. The command layer is responsible for calling CheckOrderSafety,
+// decision gating, and intent logging before invoking this method.
+func (e *Exchange) Submit(ctx context.Context, accountID string, order models.NewOrder, idempotencyKey string) (models.SubmitResult, error) {
+	body, err := json.Marshal(order)
+	if err != nil {
+		return models.SubmitResult{}, fmt.Errorf("exchange.Submit: marshal: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		fmt.Sprintf("%s/accounts/%s/orders", e.baseURL, accountID),
+		bytes.NewReader(body))
+	if err != nil {
+		return models.SubmitResult{}, fmt.Errorf("exchange.Submit: build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := e.cl.Do(ctx, req, client.FamilyOrders,
+		client.RequestOptions{IdempotencyKey: idempotencyKey})
+	if err != nil {
+		return models.SubmitResult{}, fmt.Errorf("exchange.Submit: %w", err)
+	}
+	defer resp.Body.Close()
+
+	data, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		return models.SubmitResult{}, fmt.Errorf("exchange.Submit: HTTP %d: %s", resp.StatusCode, data)
+	}
+
+	var env models.DataEnvelope[models.SubmitResult]
+	if err := json.Unmarshal(data, &env); err != nil {
+		return models.SubmitResult{}, fmt.Errorf("exchange.Submit: parse: %w", err)
+	}
+	return env.Data, nil
+}
+
 // QuoteToken fetches a fresh DXLink authentication token.
 // The /api-quote-tokens endpoint is unversioned — SkipVersion:true is mandatory.
 // A new token must be retrieved before every DXLink connect and reconnect.

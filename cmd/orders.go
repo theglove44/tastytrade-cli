@@ -1,15 +1,18 @@
 package cmd
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"github.com/spf13/cobra"
+	iclient "github.com/theglove44/tastytrade-cli/internal/client"
 	"github.com/theglove44/tastytrade-cli/internal/intentlog"
 	"github.com/theglove44/tastytrade-cli/internal/models"
 )
@@ -61,24 +64,7 @@ func runOrders(ctx context.Context) error {
 	if flagJSON {
 		out := OrdersOutput{AccountNumber: accountID, Count: len(items)}
 		for _, o := range items {
-			os := OrderSummary{
-				ID:          o.ID,
-				Status:      o.Status,
-				OrderType:   o.OrderType,
-				TimeInForce: o.TimeInForce,
-				Price:       o.Price,
-				PriceEffect: o.PriceEffect,
-				ReceivedAt:  o.ReceivedAt.Format("2006-01-02T15:04:05Z"),
-			}
-			for _, l := range o.Legs {
-				os.Legs = append(os.Legs, LegSummary{
-					Symbol:         l.Symbol,
-					InstrumentType: l.InstrumentType,
-					Action:         l.Action,
-					Quantity:       l.Quantity.String(),
-				})
-			}
-			out.Orders = append(out.Orders, os)
+			out.Orders = append(out.Orders, buildOrderSummary(o))
 		}
 		return printJSON(out)
 	}
@@ -100,11 +86,127 @@ func runOrders(ctx context.Context) error {
 	return nil
 }
 
-// ── Dry-run command ──────────────────────────────────────────────────────────
+// ── Submit command ───────────────────────────────────────────────────────────
 
 var (
-	flagDryRunFile string // path to JSON file with NewOrder payload
+	flagSubmitFile  string    // path to JSON file with NewOrder payload
+	flagSubmitYes   bool      // explicit non-interactive acknowledgement for live submit
+	flagDryRunFile  string    // path to JSON file with NewOrder payload
+	submitConfirmIn io.Reader = os.Stdin
 )
+
+var submitCmd = &cobra.Command{
+	Use:   "submit",
+	Short: "Submit a live order",
+	Long: `Submits an order to /orders and may route it to a live venue.
+
+Use only when live trading is explicitly enabled.
+The order payload must be passed as a JSON file:
+  tt submit --file order.json [--json] [--yes]
+
+The JSON shape is identical to tt dry-run. Consider validating with dry-run first.
+
+In --json mode, --yes is required to acknowledge live submission non-interactively.`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runSubmit(cmd.Context())
+	},
+}
+
+func init() {
+	submitCmd.Flags().StringVar(&flagSubmitFile, "file", "",
+		"Path to JSON file containing the NewOrder payload (required)")
+	submitCmd.Flags().BoolVar(&flagSubmitYes, "yes", false,
+		"Required with --json to acknowledge live order submission non-interactively")
+	_ = submitCmd.MarkFlagRequired("file")
+
+	dryRunCmd.Flags().StringVar(&flagDryRunFile, "file", "",
+		"Path to JSON file containing the NewOrder payload (required)")
+	_ = dryRunCmd.MarkFlagRequired("file")
+}
+
+// SubmitOutput is the stable --json schema for the first live-submit path.
+type SubmitOutput struct {
+	Submitted          bool             `json:"submitted"`
+	Warnings           []DryRunErrorOut `json:"warnings"`
+	BuyingPowerEffect  BPEffectOut      `json:"buying_power_effect"`
+	Order              OrderSummary     `json:"order"`
+	DecisionGateStatus string           `json:"decision_gate_status,omitempty"`
+}
+
+func runSubmit(ctx context.Context) error {
+	accountID := cfg.AccountID
+	if accountID == "" {
+		return fmt.Errorf("submit: TASTYTRADE_ACCOUNT_ID is not set")
+	}
+	if !cfg.LiveTrading {
+		return fmt.Errorf("submit blocked: live trading is not enabled (set TASTYTRADE_LIVE_TRADING=true against production intentionally)")
+	}
+
+	if err := cl.CheckOrderSafety(); err != nil {
+		return fmt.Errorf("submit blocked: %w", err)
+	}
+
+	gateView := currentDecisionGate("submit", rec)
+	if !flagJSON {
+		emitDecisionGateHumanMessage(gateView)
+	}
+	if err := enforceDecisionGate("submit", rec, logger); err != nil {
+		return err
+	}
+
+	order, err := parseOrderFile(flagSubmitFile, "submit")
+	if err != nil {
+		return err
+	}
+	if err := confirmLiveSubmit(order); err != nil {
+		return err
+	}
+	idemKey := uuid.NewString()
+	writeOrderIntent("submit", accountID, order, idemKey)
+
+	if !flagJSON {
+		fmt.Println("Proceeding with live submission...")
+	}
+	result, err := ex.Submit(ctx, accountID, order, idemKey)
+	if err != nil {
+		return fmt.Errorf("submit: %w", err)
+	}
+	iclient.Metrics.OrdersSubmitted.WithLabelValues("submit").Inc()
+
+	if flagJSON {
+		out := SubmitOutput{
+			Submitted:          true,
+			Warnings:           make([]DryRunErrorOut, 0, len(result.Warnings)),
+			BuyingPowerEffect:  buildBPEffectOut(result.BuyingPowerEffect),
+			Order:              buildOrderSummary(result.Order),
+			DecisionGateStatus: string(gateView.Decision.Outcome),
+		}
+		for _, w := range result.Warnings {
+			out.Warnings = append(out.Warnings, DryRunErrorOut{Code: w.Code, Message: w.Message})
+		}
+		return printJSON(out)
+	}
+
+	fmt.Println("✓ ORDER SUBMITTED")
+	fmt.Printf("  Order ID:      %s\n", result.Order.ID)
+	fmt.Printf("  Status:        %s\n", result.Order.Status)
+	fmt.Printf("  Type:          %s\n", result.Order.OrderType)
+	fmt.Printf("  Time In Force: %s\n", result.Order.TimeInForce)
+	bp := result.BuyingPowerEffect
+	fmt.Printf("  BP Change:     %s %s\n", bp.ChangeInBuyingPower, bp.ChangeInBuyingPowerEffect)
+	fmt.Printf("  Margin Change: %s %s\n", bp.ChangeInMarginRequirement, bp.ChangeInMarginRequirementEffect)
+	fmt.Printf("  Current BP:    %s\n", bp.CurrentBuyingPower)
+	fmt.Printf("  New BP:        %s\n", bp.NewBuyingPower)
+	if len(result.Warnings) > 0 {
+		fmt.Printf("  Warnings (%d):\n", len(result.Warnings))
+		for _, w := range result.Warnings {
+			fmt.Printf("    [%s] %s\n", w.Code, w.Message)
+		}
+	}
+	return nil
+}
+
+// ── Dry-run command ──────────────────────────────────────────────────────────
 
 var dryRunCmd = &cobra.Command{
 	Use:   "dry-run",
@@ -132,12 +234,6 @@ Example order.json (iron condor):
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runDryRun(cmd.Context())
 	},
-}
-
-func init() {
-	dryRunCmd.Flags().StringVar(&flagDryRunFile, "file", "",
-		"Path to JSON file containing the NewOrder payload (required)")
-	_ = dryRunCmd.MarkFlagRequired("file")
 }
 
 // DryRunOutput is the stable --json schema for automation pipeline consumers.
@@ -184,36 +280,12 @@ func runDryRun(ctx context.Context) error {
 		return err
 	}
 
-	// Read and parse the order payload.
-	orderData, err := readFile(flagDryRunFile)
+	order, err := parseOrderFile(flagDryRunFile, "dry-run")
 	if err != nil {
-		return fmt.Errorf("dry-run: read order file: %w", err)
+		return err
 	}
-	var order models.NewOrder
-	if err := json.Unmarshal(orderData, &order); err != nil {
-		return fmt.Errorf("dry-run: parse order file: %w", err)
-	}
-
-	// Generate idempotency key before dispatch and record in intent log.
-	// The same key is used for the HTTP request via the exchange layer.
 	idemKey := uuid.NewString()
-	firstSymbol, firstQty := "", ""
-	if len(order.Legs) > 0 {
-		firstSymbol = order.Legs[0].Symbol
-		firstQty = fmt.Sprintf("%d", order.Legs[0].Quantity)
-	}
-	intentlog.Write(intentlog.Entry{
-		AccountID:      accountID,
-		Symbol:         firstSymbol,
-		Strategy:       "dry-run",
-		Quantity:       firstQty,
-		Price:          order.Price,
-		PriceEffect:    order.PriceEffect,
-		OrderType:      order.OrderType,
-		TimeInForce:    order.TimeInForce,
-		LegCount:       len(order.Legs),
-		IdempotencyKey: idemKey,
-	}, logger)
+	writeOrderIntent("dry-run", accountID, order, idemKey)
 
 	// Execute via the exchange layer, passing the pre-logged idempotency key
 	// so the intent log entry and X-Idempotency-Key header carry the same UUID.
@@ -224,17 +296,11 @@ func runDryRun(ctx context.Context) error {
 
 	if flagJSON {
 		out := DryRunOutput{
-			OK:       len(result.Errors) == 0,
-			Errors:   make([]DryRunErrorOut, 0, len(result.Errors)),
-			Warnings: make([]DryRunErrorOut, 0, len(result.Warnings)),
-			BuyingPowerEffect: BPEffectOut{
-				ChangeInBuyingPower:       result.BuyingPowerEffect.ChangeInBuyingPower.String(),
-				ChangeInBuyingPowerEffect: result.BuyingPowerEffect.ChangeInBuyingPowerEffect,
-				ChangeInMarginReq:         result.BuyingPowerEffect.ChangeInMarginRequirement.String(),
-				ChangeInMarginReqEffect:   result.BuyingPowerEffect.ChangeInMarginRequirementEffect,
-				CurrentBuyingPower:        result.BuyingPowerEffect.CurrentBuyingPower.String(),
-				NewBuyingPower:            result.BuyingPowerEffect.NewBuyingPower.String(),
-			},
+			OK:                len(result.Errors) == 0,
+			Errors:            make([]DryRunErrorOut, 0, len(result.Errors)),
+			Warnings:          make([]DryRunErrorOut, 0, len(result.Warnings)),
+			BuyingPowerEffect: buildBPEffectOut(result.BuyingPowerEffect),
+			Order:             buildOrderSummary(result.Order),
 		}
 		for _, e := range result.Errors {
 			out.Errors = append(out.Errors, DryRunErrorOut{Code: e.Code, Message: e.Message})
@@ -242,24 +308,6 @@ func runDryRun(ctx context.Context) error {
 		for _, w := range result.Warnings {
 			out.Warnings = append(out.Warnings, DryRunErrorOut{Code: w.Code, Message: w.Message})
 		}
-		o := result.Order
-		os := OrderSummary{
-			ID:          o.ID,
-			Status:      o.Status,
-			OrderType:   o.OrderType,
-			TimeInForce: o.TimeInForce,
-			Price:       o.Price,
-			PriceEffect: o.PriceEffect,
-		}
-		for _, l := range o.Legs {
-			os.Legs = append(os.Legs, LegSummary{
-				Symbol:         l.Symbol,
-				InstrumentType: l.InstrumentType,
-				Action:         l.Action,
-				Quantity:       l.Quantity.String(),
-			})
-		}
-		out.Order = os
 		return printJSON(out)
 	}
 
@@ -284,6 +332,105 @@ func runDryRun(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func confirmLiveSubmit(order models.NewOrder) error {
+	if flagJSON {
+		if !flagSubmitYes {
+			return fmt.Errorf("submit blocked: --json mode requires --yes to acknowledge live order submission")
+		}
+		return nil
+	}
+
+	fmt.Println("LIVE ORDER SUBMISSION")
+	fmt.Println("This will submit a live order to tastytrade.")
+	fmt.Printf("  Type:          %s\n", order.OrderType)
+	fmt.Printf("  Time In Force: %s\n", order.TimeInForce)
+	if order.Price != "" || order.PriceEffect != "" {
+		fmt.Printf("  Price:         %s %s\n", order.Price, order.PriceEffect)
+	}
+	fmt.Printf("  Legs:          %d\n", len(order.Legs))
+	for i, leg := range order.Legs {
+		fmt.Printf("    %d. %s %s x%d (%s)\n", i+1, leg.Action, leg.Symbol, leg.Quantity, leg.InstrumentType)
+	}
+	fmt.Print("Type 'submit' to confirm live order submission: ")
+
+	reader := bufio.NewReader(submitConfirmIn)
+	line, err := reader.ReadString('\n')
+	if err != nil && err != io.EOF {
+		return fmt.Errorf("submit confirmation failed: %w", err)
+	}
+	if strings.TrimSpace(strings.ToLower(line)) != "submit" {
+		fmt.Println("submit declined by operator")
+		return fmt.Errorf("submit aborted: operator declined confirmation")
+	}
+	return nil
+}
+
+func buildOrderSummary(o models.Order) OrderSummary {
+	os := OrderSummary{
+		ID:          o.ID,
+		Status:      o.Status,
+		OrderType:   o.OrderType,
+		TimeInForce: o.TimeInForce,
+		Price:       o.Price,
+		PriceEffect: o.PriceEffect,
+	}
+	if !o.ReceivedAt.IsZero() {
+		os.ReceivedAt = o.ReceivedAt.Format("2006-01-02T15:04:05Z")
+	}
+	for _, l := range o.Legs {
+		os.Legs = append(os.Legs, LegSummary{
+			Symbol:         l.Symbol,
+			InstrumentType: l.InstrumentType,
+			Action:         l.Action,
+			Quantity:       l.Quantity.String(),
+		})
+	}
+	return os
+}
+
+func buildBPEffectOut(bp models.BPEffect) BPEffectOut {
+	return BPEffectOut{
+		ChangeInBuyingPower:       bp.ChangeInBuyingPower.String(),
+		ChangeInBuyingPowerEffect: bp.ChangeInBuyingPowerEffect,
+		ChangeInMarginReq:         bp.ChangeInMarginRequirement.String(),
+		ChangeInMarginReqEffect:   bp.ChangeInMarginRequirementEffect,
+		CurrentBuyingPower:        bp.CurrentBuyingPower.String(),
+		NewBuyingPower:            bp.NewBuyingPower.String(),
+	}
+}
+
+func parseOrderFile(path, action string) (models.NewOrder, error) {
+	orderData, err := readFile(path)
+	if err != nil {
+		return models.NewOrder{}, fmt.Errorf("%s: read order file: %w", action, err)
+	}
+	var order models.NewOrder
+	if err := json.Unmarshal(orderData, &order); err != nil {
+		return models.NewOrder{}, fmt.Errorf("%s: parse order file: %w", action, err)
+	}
+	return order, nil
+}
+
+func writeOrderIntent(strategy, accountID string, order models.NewOrder, idemKey string) {
+	firstSymbol, firstQty := "", ""
+	if len(order.Legs) > 0 {
+		firstSymbol = order.Legs[0].Symbol
+		firstQty = fmt.Sprintf("%d", order.Legs[0].Quantity)
+	}
+	intentlog.Write(intentlog.Entry{
+		AccountID:      accountID,
+		Symbol:         firstSymbol,
+		Strategy:       strategy,
+		Quantity:       firstQty,
+		Price:          order.Price,
+		PriceEffect:    order.PriceEffect,
+		OrderType:      order.OrderType,
+		TimeInForce:    order.TimeInForce,
+		LegCount:       len(order.Legs),
+		IdempotencyKey: idemKey,
+	}, logger)
 }
 
 // readFile is a thin wrapper to allow test injection.

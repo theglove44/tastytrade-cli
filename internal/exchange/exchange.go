@@ -35,6 +35,11 @@ type Exchange interface {
 	// X-Idempotency-Key HTTP header are always the same value.
 	DryRun(ctx context.Context, accountID string, order models.NewOrder, idempotencyKey string) (models.DryRunResult, error)
 
+	// Submit routes a live order to POST /accounts/{account_number}/orders.
+	// idempotencyKey must be a pre-generated UUID that has already been written
+	// to the intent log so the log record and request header stay identical.
+	Submit(ctx context.Context, accountID string, order models.NewOrder, idempotencyKey string) (models.SubmitResult, error)
+
 	// QuoteToken retrieves a fresh DXLink authentication token from
 	// GET /api-quote-tokens. This endpoint is unversioned — the implementation
 	// must use RequestOptions{SkipVersion: true}.

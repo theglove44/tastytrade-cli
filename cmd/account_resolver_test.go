@@ -27,6 +27,9 @@ func (s stubAccountResolverExchange) Orders(context.Context, string) ([]models.O
 func (s stubAccountResolverExchange) DryRun(context.Context, string, models.NewOrder, string) (models.DryRunResult, error) {
 	return models.DryRunResult{}, nil
 }
+func (s stubAccountResolverExchange) Submit(context.Context, string, models.NewOrder, string) (models.SubmitResult, error) {
+	return models.SubmitResult{}, nil
+}
 func (s stubAccountResolverExchange) QuoteToken(context.Context) (models.QuoteToken, error) {
 	return models.QuoteToken{}, nil
 }

@@ -20,6 +20,7 @@ import (
 
 type gateTestExchange struct {
 	dryRunCalled bool
+	submitCalled bool
 	ordersCalled bool
 }
 
@@ -42,6 +43,28 @@ func (g *gateTestExchange) DryRun(context.Context, string, models.NewOrder, stri
 		Order: models.Order{
 			ID:          "dry-run-1",
 			Status:      "Received",
+			OrderType:   "Limit",
+			TimeInForce: "Day",
+			Price:       decimal.RequireFromString("1.00"),
+			PriceEffect: "Debit",
+		},
+		BuyingPowerEffect: models.BPEffect{
+			ChangeInBuyingPower:             decimal.RequireFromString("-100.00"),
+			ChangeInBuyingPowerEffect:       "Debit",
+			ChangeInMarginRequirement:       decimal.RequireFromString("0"),
+			ChangeInMarginRequirementEffect: "None",
+			CurrentBuyingPower:              decimal.RequireFromString("1000.00"),
+			NewBuyingPower:                  decimal.RequireFromString("900.00"),
+		},
+	}, nil
+}
+
+func (g *gateTestExchange) Submit(context.Context, string, models.NewOrder, string) (models.SubmitResult, error) {
+	g.submitCalled = true
+	return models.SubmitResult{
+		Order: models.Order{
+			ID:          "submit-1",
+			Status:      "Routed",
 			OrderType:   "Limit",
 			TimeInForce: "Day",
 			Price:       decimal.RequireFromString("1.00"),
@@ -90,9 +113,13 @@ func setupDecisionGateCommandTest(t *testing.T) (*gateTestExchange, *observer.Ob
 	t.Helper()
 	origCfg, origCl, origEx, origRec, origLogger := cfg, cl, ex, rec, logger
 	origFlagJSON, origReadFile := flagJSON, readFile
+	origFlagSubmitFile, origFlagSubmitYes, origFlagDryRunFile := flagSubmitFile, flagSubmitYes, flagDryRunFile
+	origSubmitConfirmIn := submitConfirmIn
 	t.Cleanup(func() {
 		cfg, cl, ex, rec, logger = origCfg, origCl, origEx, origRec, origLogger
 		flagJSON, readFile = origFlagJSON, origReadFile
+		flagSubmitFile, flagSubmitYes, flagDryRunFile = origFlagSubmitFile, origFlagSubmitYes, origFlagDryRunFile
+		submitConfirmIn = origSubmitConfirmIn
 	})
 
 	t.Setenv("HOME", t.TempDir())
@@ -102,6 +129,10 @@ func setupDecisionGateCommandTest(t *testing.T) (*gateTestExchange, *observer.Ob
 	cl = client.New(cfg, logger)
 	ex = &gateTestExchange{}
 	flagJSON = true
+	flagSubmitFile = "order.json"
+	flagSubmitYes = false
+	flagDryRunFile = "order.json"
+	submitConfirmIn = strings.NewReader("")
 	readFile = func(string) ([]byte, error) {
 		return []byte(`{"order-type":"Limit","time-in-force":"Day","price":"1.00","price-effect":"Debit","legs":[{"instrument-type":"Equity","symbol":"AAPL","quantity":1,"action":"Buy to Open"}]}`), nil
 	}
@@ -199,6 +230,165 @@ func TestRunDryRun_AllowsWithWarningWhenReconcileDegraded(t *testing.T) {
 	entries := logs.FilterMessage("decision gate: proceeding with degraded confidence").All()
 	if len(entries) != 1 {
 		t.Fatalf("warning logs = %d, want 1", len(entries))
+	}
+}
+
+func TestRunSubmit_BlockedWhenReconcilePolicySuppressesConfidence(t *testing.T) {
+	gx, logs := setupDecisionGateCommandTest(t)
+	cfg.LiveTrading = true
+	flagJSON = false
+	submitConfirmIn = strings.NewReader("submit\n")
+	rec = &stubReconciler{ok: true, latest: reconciler.Result{Status: reconciler.StatusError, ErrorText: "rest timeout"}}
+
+	stdout := captureStdout(t, func() {
+		err := runSubmit(context.Background())
+		if err == nil {
+			t.Fatal("runSubmit error = nil, want blocked error")
+		}
+		if !strings.Contains(err.Error(), "submit blocked by reconcile policy") {
+			t.Fatalf("error = %q, want reconcile policy block", err.Error())
+		}
+	})
+	if gx.submitCalled {
+		t.Fatal("exchange Submit called despite blocked decision gate")
+	}
+	if !strings.Contains(stdout, "✗ submit blocked by reconcile policy") {
+		t.Fatalf("stdout = %q, want explicit block message", stdout)
+	}
+	entries := logs.FilterMessage("decision gate: blocked confidence-dependent action").All()
+	if len(entries) != 1 {
+		t.Fatalf("blocked logs = %d, want 1", len(entries))
+	}
+}
+
+func TestRunSubmit_JSONRequiresYesFlag(t *testing.T) {
+	gx, _ := setupDecisionGateCommandTest(t)
+	cfg.LiveTrading = true
+	flagJSON = true
+	flagSubmitYes = false
+	rec = &stubReconciler{ok: true, latest: reconciler.Result{Status: reconciler.StatusOK}}
+
+	err := runSubmit(context.Background())
+	if err == nil {
+		t.Fatal("runSubmit error = nil, want acknowledgement block")
+	}
+	if !strings.Contains(err.Error(), "--json mode requires --yes") {
+		t.Fatalf("error = %q, want --yes requirement", err.Error())
+	}
+	if gx.submitCalled {
+		t.Fatal("exchange Submit called without --yes acknowledgement")
+	}
+}
+
+func TestRunSubmit_OKJSON(t *testing.T) {
+	gx, logs := setupDecisionGateCommandTest(t)
+	cfg.LiveTrading = true
+	flagJSON = true
+	flagSubmitYes = true
+	rec = &stubReconciler{ok: true, latest: reconciler.Result{Status: reconciler.StatusOK}}
+
+	stdout := captureStdout(t, func() {
+		if err := runSubmit(context.Background()); err != nil {
+			t.Fatalf("runSubmit: %v", err)
+		}
+	})
+	if !gx.submitCalled {
+		t.Fatal("exchange Submit was not called")
+	}
+	if !strings.Contains(stdout, "\"submitted\": true") || !strings.Contains(stdout, "\"decision_gate_status\": \"allowed\"") {
+		t.Fatalf("stdout = %q, want stable submit json output", stdout)
+	}
+	entries := logs.FilterMessage("decision gate: confidence check passed").All()
+	if len(entries) != 1 {
+		t.Fatalf("allow logs = %d, want 1", len(entries))
+	}
+}
+
+func TestRunSubmit_DecliningConfirmationAbortsSafely(t *testing.T) {
+	gx, _ := setupDecisionGateCommandTest(t)
+	cfg.LiveTrading = true
+	flagJSON = false
+	submitConfirmIn = strings.NewReader("no\n")
+	rec = &stubReconciler{ok: true, latest: reconciler.Result{Status: reconciler.StatusOK}}
+
+	stdout := captureStdout(t, func() {
+		err := runSubmit(context.Background())
+		if err == nil {
+			t.Fatal("runSubmit error = nil, want operator decline")
+		}
+		if !strings.Contains(err.Error(), "operator declined confirmation") {
+			t.Fatalf("error = %q, want operator decline", err.Error())
+		}
+	})
+	if gx.submitCalled {
+		t.Fatal("exchange Submit called despite declined confirmation")
+	}
+	if !strings.Contains(stdout, "LIVE ORDER SUBMISSION") || !strings.Contains(stdout, "submit declined by operator") {
+		t.Fatalf("stdout = %q, want confirmation prompt and decline output", stdout)
+	}
+}
+
+func TestRunSubmit_AcceptingConfirmationProceeds(t *testing.T) {
+	gx, _ := setupDecisionGateCommandTest(t)
+	cfg.LiveTrading = true
+	flagJSON = false
+	submitConfirmIn = strings.NewReader("submit\n")
+	rec = &stubReconciler{ok: true, latest: reconciler.Result{Status: reconciler.StatusOK}}
+
+	stdout := captureStdout(t, func() {
+		if err := runSubmit(context.Background()); err != nil {
+			t.Fatalf("runSubmit: %v", err)
+		}
+	})
+	if !gx.submitCalled {
+		t.Fatal("exchange Submit was not called")
+	}
+	if !strings.Contains(stdout, "LIVE ORDER SUBMISSION") || !strings.Contains(stdout, "Proceeding with live submission...") || !strings.Contains(stdout, "✓ ORDER SUBMITTED") {
+		t.Fatalf("stdout = %q, want prompt, proceed message, and success output", stdout)
+	}
+}
+
+func TestRunSubmit_AllowsWithWarningWhenReconcileDegraded(t *testing.T) {
+	gx, logs := setupDecisionGateCommandTest(t)
+	cfg.LiveTrading = true
+	flagJSON = false
+	submitConfirmIn = strings.NewReader("submit\n")
+	rec = &stubReconciler{ok: true, latest: reconciler.Result{Status: reconciler.StatusPartial, MismatchCount: 1}}
+
+	stdout := captureStdout(t, func() {
+		if err := runSubmit(context.Background()); err != nil {
+			t.Fatalf("runSubmit: %v", err)
+		}
+	})
+	if !gx.submitCalled {
+		t.Fatal("exchange Submit was not called")
+	}
+	if !strings.Contains(stdout, "⚠ submit proceeding with degraded reconcile confidence") {
+		t.Fatalf("stdout = %q, want explicit warning", stdout)
+	}
+	if !strings.Contains(stdout, "✓ ORDER SUBMITTED") {
+		t.Fatalf("stdout = %q, want submit success output", stdout)
+	}
+	entries := logs.FilterMessage("decision gate: proceeding with degraded confidence").All()
+	if len(entries) != 1 {
+		t.Fatalf("warning logs = %d, want 1", len(entries))
+	}
+}
+
+func TestRunSubmit_BlockedWhenLiveTradingDisabled(t *testing.T) {
+	gx, _ := setupDecisionGateCommandTest(t)
+	cfg.LiveTrading = false
+	submitConfirmIn = strings.NewReader("submit\n")
+
+	err := runSubmit(context.Background())
+	if err == nil {
+		t.Fatal("runSubmit error = nil, want live-trading block")
+	}
+	if !strings.Contains(err.Error(), "submit blocked: live trading is not enabled") {
+		t.Fatalf("error = %q, want live-trading block", err.Error())
+	}
+	if gx.submitCalled {
+		t.Fatal("exchange Submit called while live trading disabled")
 	}
 }
 

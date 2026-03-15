@@ -96,6 +96,9 @@ func (m *mockExchange) Orders(_ context.Context, _ string) ([]models.Order, erro
 func (m *mockExchange) DryRun(_ context.Context, _ string, _ models.NewOrder, _ string) (models.DryRunResult, error) {
 	return models.DryRunResult{}, nil
 }
+func (m *mockExchange) Submit(_ context.Context, _ string, _ models.NewOrder, _ string) (models.SubmitResult, error) {
+	return models.SubmitResult{}, nil
+}
 func (m *mockExchange) QuoteToken(_ context.Context) (models.QuoteToken, error) {
 	return models.QuoteToken{}, nil
 }

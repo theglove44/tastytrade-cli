@@ -54,6 +54,7 @@ Press Ctrl+C to trigger a clean shutdown.`,
 
 		logWatchHeartbeat(logger, acctRuntime, mktRuntime, rec)
 		logWatchReconcileStatus(logger, rec)
+		logWatchDecisionGate(logger, rec)
 		go watchStatusLoop(cmd.Context(), logger, acctRuntime, mktRuntime, rec, cfg.ReconcileInterval)
 
 		logger.Info("tt watch ready — press Ctrl+C to stop")
@@ -219,6 +220,30 @@ func logWatchReconcileStatus(log *zap.Logger, rec reconciler.Reconciler) {
 	log.Info("tt watch reconcile status", fields...)
 }
 
+func logWatchDecisionGate(log *zap.Logger, rec reconciler.Reconciler) {
+	view := currentDecisionGate("confidence-dependent-actions", rec)
+	fields := []zap.Field{
+		zap.String("action", view.Action),
+		zap.String("gate_outcome", string(view.Decision.Outcome)),
+		zap.String("reconcile_status", string(view.Decision.ReconcileStatus)),
+		zap.String("reconcile_policy", string(view.Decision.ReconcilePolicy)),
+		zap.Bool("reconcile_degraded", view.Decision.Degraded),
+		zap.Bool("suppress_confidence_actions", view.Decision.SuppressConfidenceActions),
+	}
+	if view.Decision.Reason != "" {
+		fields = append(fields, zap.String("reason", view.Decision.Reason))
+	}
+
+	switch view.Decision.Outcome {
+	case reconciler.GateAllowWithWarning:
+		log.Warn("tt watch decision gate", fields...)
+	case reconciler.GateBlock:
+		log.Warn("tt watch decision gate", fields...)
+	default:
+		log.Info("tt watch decision gate", fields...)
+	}
+}
+
 func watchStatusLoop(ctx context.Context, log *zap.Logger, acct streamer.Streamer, mkt streamer.Streamer, rec reconciler.Reconciler, every time.Duration) {
 	if every <= 0 {
 		return
@@ -232,6 +257,7 @@ func watchStatusLoop(ctx context.Context, log *zap.Logger, acct streamer.Streame
 		case <-ticker.C:
 			logWatchHeartbeat(log, acct, mkt, rec)
 			logWatchReconcileStatus(log, rec)
+			logWatchDecisionGate(log, rec)
 		}
 	}
 }

@@ -139,6 +139,17 @@ type DryRunResult struct {
 	FeeCalculation    []DryRunFee   `json:"fee-calculation,omitempty"`
 }
 
+// SubmitResult is the accepted live-order response payload from
+// POST /accounts/{account_number}/orders.
+//
+// The submit response overlaps heavily with dry-run, but is modeled separately
+// so live-routing semantics stay explicit at the command layer.
+type SubmitResult struct {
+	Order             Order         `json:"order"`
+	Warnings          []DryRunError `json:"warnings,omitempty"`
+	BuyingPowerEffect BPEffect      `json:"buying-power-effect"`
+}
+
 type DryRunError struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`

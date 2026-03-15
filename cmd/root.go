@@ -510,6 +510,7 @@ func init() {
 		accountsCmd,
 		positionsCmd,
 		ordersCmd,
+		submitCmd,
 		dryRunCmd,
 		killCmd,
 		resumeCmd,

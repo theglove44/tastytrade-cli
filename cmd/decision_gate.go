@@ -37,6 +37,25 @@ func currentDecisionGate(action string, rec reconciler.Reconciler) decisionGateV
 	return view
 }
 
+func emitDecisionGateHumanMessage(view decisionGateView) {
+	switch view.Decision.Outcome {
+	case reconciler.GateAllowWithWarning:
+		fmt.Printf("⚠ %s proceeding with degraded reconcile confidence: status=%s policy=%s reason=%s\n",
+			view.Action,
+			view.Decision.ReconcileStatus,
+			view.Decision.ReconcilePolicy,
+			view.Decision.Reason,
+		)
+	case reconciler.GateBlock:
+		fmt.Printf("✗ %s blocked by reconcile policy: status=%s policy=%s reason=%s\n",
+			view.Action,
+			view.Decision.ReconcileStatus,
+			view.Decision.ReconcilePolicy,
+			view.Decision.Reason,
+		)
+	}
+}
+
 func enforceDecisionGate(action string, rec reconciler.Reconciler, log *zap.Logger) error {
 	view := currentDecisionGate(action, rec)
 	fields := []zap.Field{

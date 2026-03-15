@@ -61,3 +61,9 @@ Examples:
   - branch closeout, docs hygiene, stray artifact cleanup, and Phase 3B handoff recommendation
 - `MI-2026-03-15-phase3b-decision-gating.md`
   - lightweight reconcile-policy decision gating threaded into dry-run while leaving read-only paths untouched
+- `MI-2026-03-15-phase3b-decision-gating-watch-surface.md`
+  - extend the same gate into tt watch as an explicit operator-visible workflow surface
+- `MI-2026-03-15-live-submit-minimal-path.md`
+  - first minimal live-submit command reusing safety checks, decision gating, and intent logging
+- `MI-2026-03-15-live-submit-operator-confirmation.md`
+  - explicit human confirmation and JSON-mode acknowledgement for live order submission
