@@ -176,6 +176,14 @@ func runDryRun(ctx context.Context) error {
 		return fmt.Errorf("dry-run blocked: %w", err)
 	}
 
+	// Confidence gate — Phase 3B.
+	// Dry-run is the current confidence-dependent order decision entry point.
+	// We keep the existing order-safety checks intact, then consult the latest
+	// reconciler policy before consuming the orders-family endpoint.
+	if err := enforceDecisionGate("dry-run", rec, logger); err != nil {
+		return err
+	}
+
 	// Read and parse the order payload.
 	orderData, err := readFile(flagDryRunFile)
 	if err != nil {

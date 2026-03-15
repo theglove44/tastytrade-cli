@@ -59,3 +59,5 @@ Examples:
   - conservative operational handling policy for reconciler outcomes and watch heartbeat policy state
 - `MI-2026-03-15-phase3a-closeout.md`
   - branch closeout, docs hygiene, stray artifact cleanup, and Phase 3B handoff recommendation
+- `MI-2026-03-15-phase3b-decision-gating.md`
+  - lightweight reconcile-policy decision gating threaded into dry-run while leaving read-only paths untouched
