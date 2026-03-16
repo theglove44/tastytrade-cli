@@ -222,6 +222,11 @@ func runSubmit(ctx context.Context) error {
 	dupResult := liveSubmitIdentities.reserve(identity)
 	logDuplicateSubmitCheck(logger, identity, dupResult)
 	if !dupResult.Allowed {
+		if !flagJSON && (dupResult.DenyReason == DuplicateSubmitRestartInFlight || dupResult.DenyReason == DuplicateSubmitRestartUnknown) {
+			fmt.Println("LIVE SUBMIT DENIED")
+			fmt.Printf("  outcome=deny primary_reason=%s intent_id=%s\n", dupResult.DenyReason, idemKey)
+			fmt.Println("  prior submit state is uncertain or in-flight; manual inspection is required before retry")
+		}
 		return fmt.Errorf("submit blocked by duplicate-submit policy: %s", dupResult.DenyReason)
 	}
 

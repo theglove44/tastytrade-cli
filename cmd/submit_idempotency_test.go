@@ -1,9 +1,33 @@
 package cmd
 
-import "testing"
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func freshSubmitIdentityRegistry() *submitIdentityRegistry {
 	return &submitIdentityRegistry{records: map[string]submitIdentityRecord{}}
+}
+
+func withSubmitIdentityPersistence(t *testing.T) *submitIdentityRegistry {
+	t.Helper()
+	dir := t.TempDir()
+	origPath := submitIdentityStatePath
+	origRead := submitIdentityReadFile
+	origWrite := submitIdentityWriteFile
+	t.Cleanup(func() {
+		submitIdentityStatePath = origPath
+		submitIdentityReadFile = origRead
+		submitIdentityWriteFile = origWrite
+	})
+	submitIdentityStatePath = func() (string, error) {
+		return filepath.Join(dir, "live_submit_identities.json"), nil
+	}
+	submitIdentityReadFile = os.ReadFile
+	submitIdentityWriteFile = os.WriteFile
+	return freshSubmitIdentityRegistry()
 }
 
 func TestDeriveSubmitIdentity(t *testing.T) {
@@ -20,7 +44,7 @@ func TestDeriveSubmitIdentity(t *testing.T) {
 }
 
 func TestSubmitIdentity_FirstSubmitAllowed(t *testing.T) {
-	r := freshSubmitIdentityRegistry()
+	r := withSubmitIdentityPersistence(t)
 	identity, _ := deriveSubmitIdentity("ACCT-1", "intent-1", "hash-1")
 	result := r.reserve(identity)
 	if !result.Allowed || result.State != SubmitIdentityInFlight {
@@ -29,7 +53,7 @@ func TestSubmitIdentity_FirstSubmitAllowed(t *testing.T) {
 }
 
 func TestSubmitIdentity_ExactDuplicateDenied(t *testing.T) {
-	r := freshSubmitIdentityRegistry()
+	r := withSubmitIdentityPersistence(t)
 	identity, _ := deriveSubmitIdentity("ACCT-1", "intent-1", "hash-1")
 	if first := r.reserve(identity); !first.Allowed {
 		t.Fatalf("first reserve = %+v, want allowed", first)
@@ -41,7 +65,7 @@ func TestSubmitIdentity_ExactDuplicateDenied(t *testing.T) {
 }
 
 func TestSubmitIdentity_SubmittedDuplicateDenied(t *testing.T) {
-	r := freshSubmitIdentityRegistry()
+	r := withSubmitIdentityPersistence(t)
 	identity, _ := deriveSubmitIdentity("ACCT-1", "intent-1", "hash-1")
 	if first := r.reserve(identity); !first.Allowed {
 		t.Fatalf("first reserve = %+v, want allowed", first)
@@ -65,7 +89,7 @@ func TestSubmitIdentity_UnknownStateDenied(t *testing.T) {
 }
 
 func TestSubmitIdentity_MismatchedPriorStateDenied(t *testing.T) {
-	r := freshSubmitIdentityRegistry()
+	r := withSubmitIdentityPersistence(t)
 	identity, _ := deriveSubmitIdentity("ACCT-1", "intent-1", "hash-1")
 	r.records[identity.Key] = submitIdentityRecord{
 		Identity: SubmitIdentity{Key: identity.Key, AccountID: "OTHER", IntentID: identity.IntentID, OrderHash: identity.OrderHash},
@@ -74,5 +98,48 @@ func TestSubmitIdentity_MismatchedPriorStateDenied(t *testing.T) {
 	result := r.reserve(identity)
 	if result.Allowed || result.DenyReason != DuplicateSubmitStateMismatch {
 		t.Fatalf("result = %+v, want state-mismatch deny", result)
+	}
+}
+
+func TestSubmitIdentity_RestartWithPriorInFlightDenied(t *testing.T) {
+	r := withSubmitIdentityPersistence(t)
+	prior, _ := deriveSubmitIdentity("ACCT-1", "intent-old", "hash-1")
+	if first := r.reserve(prior); !first.Allowed {
+		t.Fatalf("first reserve = %+v, want allowed", first)
+	}
+
+	r2 := freshSubmitIdentityRegistry()
+	retry, _ := deriveSubmitIdentity("ACCT-1", "intent-new", "hash-1")
+	result := r2.reserve(retry)
+	if result.Allowed || result.DenyReason != DuplicateSubmitRestartInFlight {
+		t.Fatalf("result = %+v, want restart in-flight deny", result)
+	}
+}
+
+func TestSubmitIdentity_RestartWithUnknownPersistedStateDenied(t *testing.T) {
+	r := withSubmitIdentityPersistence(t)
+	path, _ := submitIdentityStatePath()
+	bad := persistedSubmitIdentities{Version: 1, Records: []submitIdentityRecord{{State: SubmitIdentityState("mystery")}}}
+	data, _ := json.Marshal(bad)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	r2 := freshSubmitIdentityRegistry()
+	identity, _ := deriveSubmitIdentity("ACCT-1", "intent-1", "hash-1")
+	result := r2.reserve(identity)
+	if result.Allowed || result.DenyReason != DuplicateSubmitRestartUnknown {
+		t.Fatalf("result = %+v, want restart unknown deny", result)
+	}
+	_ = r // avoid unused in some toolchains
+}
+
+func TestSubmitIdentity_CleanRestartAllowsNormalSubmitFlow(t *testing.T) {
+	_ = withSubmitIdentityPersistence(t)
+	r := freshSubmitIdentityRegistry()
+	identity, _ := deriveSubmitIdentity("ACCT-1", "intent-1", "hash-1")
+	result := r.reserve(identity)
+	if !result.Allowed {
+		t.Fatalf("result = %+v, want clean-state allow", result)
 	}
 }

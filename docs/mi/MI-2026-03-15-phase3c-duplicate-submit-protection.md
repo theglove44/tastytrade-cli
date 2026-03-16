@@ -35,7 +35,7 @@ go test ./...
   - account context
   - intent ID
   - canonical order payload hash
-- No heavy persistence or distributed coordination is needed yet.
+- Minimal local persistence is now justified for restart safety semantics, but still no distributed coordination is introduced.
 - On submit transport failure, safest minimal behavior is to leave the identity in `in_flight` state so retries deny by default rather than risking duplicate broker transmission.
 
 ## Change applied
