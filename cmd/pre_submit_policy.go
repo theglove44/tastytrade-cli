@@ -91,6 +91,19 @@ type PreSubmitPolicyResult struct {
 	DenyReasons []PreSubmitDenyReason `json:"deny_reasons,omitempty"`
 }
 
+// SubmitDenialDiagnostics is the compact operator-facing final-boundary denial summary.
+type SubmitDenialDiagnostics struct {
+	Outcome               string `json:"outcome"`
+	PrimaryReason         string `json:"primary_reason,omitempty"`
+	IntentID              string `json:"intent_id,omitempty"`
+	PayloadHashMatched    bool   `json:"payload_hash_matched"`
+	ApprovalAge           string `json:"approval_age,omitempty"`
+	ApprovalFreshness     string `json:"approval_freshness,omitempty"`
+	ConfirmationAge       string `json:"confirmation_age,omitempty"`
+	ConfirmationFreshness string `json:"confirmation_freshness,omitempty"`
+	DuplicateState        string `json:"duplicate_state,omitempty"`
+}
+
 var isApprovedLiveSubmitTransport = func(ex exchangeapi.Exchange, cfg *config.Config) bool {
 	if ex == nil || cfg == nil || !cfg.IsProd() {
 		return false
@@ -122,9 +135,6 @@ func EvaluatePreSubmitPolicy(in PreSubmitPolicyInput) PreSubmitPolicyResult {
 	}
 
 	now := in.Now
-	if now.IsZero() {
-		now = preSubmitPolicyNow()
-	}
 	if now.IsZero() {
 		deny(DenyTimeStateInvalid)
 	}
@@ -224,6 +234,65 @@ func EvaluatePreSubmitPolicy(in PreSubmitPolicyInput) PreSubmitPolicyResult {
 		result.Allowed = true
 	}
 	return result
+}
+
+func freshnessStatus(now, ts time.Time, maxAge time.Duration) (age string, freshness string) {
+	if now.IsZero() || ts.IsZero() {
+		return "unknown", "missing"
+	}
+	if ts.After(now) {
+		return "unknown", "invalid"
+	}
+	ageDur := now.Sub(ts)
+	age = fmt.Sprintf("%ds", int(ageDur.Seconds()))
+	if ageDur > maxAge {
+		return age, "expired"
+	}
+	return age, "fresh"
+}
+
+func buildSubmitDenialDiagnostics(in PreSubmitPolicyInput, result PreSubmitPolicyResult, duplicate *DuplicateSubmitCheckResult) SubmitDenialDiagnostics {
+	d := SubmitDenialDiagnostics{
+		Outcome:        "deny",
+		IntentID:       in.IntentID,
+		DuplicateState: "not_checked",
+	}
+	if result.Allowed {
+		d.Outcome = "allow"
+	}
+	if len(result.DenyReasons) > 0 {
+		d.PrimaryReason = string(result.DenyReasons[0])
+	}
+	if currentHash, err := canonicalOrderHash(in.Order); err == nil && in.OrderHash != "" {
+		d.PayloadHashMatched = currentHash == in.OrderHash
+	}
+	now := in.Now
+	if now.IsZero() {
+		now = preSubmitPolicyNow()
+	}
+	d.ApprovalAge, d.ApprovalFreshness = freshnessStatus(now, in.ApprovedAt, maxApprovalAge)
+	if in.Confirmation != nil {
+		d.ConfirmationAge, d.ConfirmationFreshness = freshnessStatus(now, in.Confirmation.ConfirmedAt, maxConfirmationAge)
+	} else {
+		d.ConfirmationAge, d.ConfirmationFreshness = "unknown", "missing"
+	}
+	if duplicate != nil {
+		if duplicate.State != "" {
+			d.DuplicateState = string(duplicate.State)
+		} else if duplicate.DenyReason != "" {
+			d.DuplicateState = string(duplicate.DenyReason)
+		}
+	}
+	return d
+}
+
+func renderSubmitDenialDiagnostics(d SubmitDenialDiagnostics) {
+	fmt.Println("LIVE SUBMIT DENIED")
+	fmt.Printf("  outcome=%s primary_reason=%s intent_id=%s\n", d.Outcome, d.PrimaryReason, d.IntentID)
+	fmt.Printf("  payload_hash_matched=%t\n", d.PayloadHashMatched)
+	fmt.Printf("  approval_age=%s approval_freshness=%s\n", d.ApprovalAge, d.ApprovalFreshness)
+	fmt.Printf("  confirmation_age=%s confirmation_freshness=%s\n", d.ConfirmationAge, d.ConfirmationFreshness)
+	fmt.Printf("  duplicate_state=%s\n", d.DuplicateState)
 }
 
 func logPreSubmitPolicyResult(log *zap.Logger, result PreSubmitPolicyResult, accountID, intentID string, decision decisionGateView) {

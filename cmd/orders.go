@@ -191,6 +191,23 @@ func runSubmit(ctx context.Context) error {
 	})
 	logPreSubmitPolicyResult(logger, policyResult, accountID, idemKey, gateView)
 	if !policyResult.Allowed {
+		if !flagJSON {
+			renderSubmitDenialDiagnostics(buildSubmitDenialDiagnostics(PreSubmitPolicyInput{
+				Config:            cfg,
+				AccountID:         accountID,
+				IntentID:          idemKey,
+				Order:             order,
+				OrderHash:         approval.OrderHash,
+				ApprovedAt:        approval.ApprovedAt,
+				Now:               preSubmitPolicyNow(),
+				SafetyErr:         safetyErr,
+				DecisionView:      gateView,
+				DecisionErr:       gateErr,
+				Approval:          approval,
+				Confirmation:      confirmation,
+				TransportApproved: isApprovedLiveSubmitTransport(ex, cfg),
+			}, policyResult, nil))
+		}
 		reasons := make([]string, 0, len(policyResult.DenyReasons))
 		for _, reason := range policyResult.DenyReasons {
 			reasons = append(reasons, string(reason))

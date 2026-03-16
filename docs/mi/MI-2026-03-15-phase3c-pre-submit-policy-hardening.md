@@ -68,6 +68,17 @@ Structured deny reasons include, for example:
 - `payload_mismatch`
 - `unknown_state`
 
+Operator-facing CLI denial diagnostics now surface a compact final-boundary summary, for example:
+
+```text
+LIVE SUBMIT DENIED
+  outcome=deny primary_reason=transport_not_approved intent_id=<intent>
+  payload_hash_matched=true
+  approval_age=0s approval_freshness=fresh
+  confirmation_age=0s confirmation_freshness=fresh
+  duplicate_state=not_checked
+```
+
 ## Files changed
 
 - `cmd/orders.go`

@@ -73,3 +73,5 @@ Examples:
   - minimal fail-closed duplicate-submit protection for approved live order intents
 - `MI-2026-03-15-phase3c-approval-expiry-and-stale-submit-protection.md`
   - fail-closed freshness policy for approval and confirmation at the live submit boundary
+- `MI-2026-03-15-phase3c-submit-denial-diagnostics.md`
+  - compact operator-visible final-boundary denial diagnostics for live submit

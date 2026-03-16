@@ -379,6 +379,40 @@ func TestRunSubmit_AllowsWithWarningWhenReconcileDegraded(t *testing.T) {
 	}
 }
 
+func TestRunSubmit_RendersPreSubmitPolicyDiagnostics(t *testing.T) {
+	gx, _ := setupDecisionGateCommandTest(t)
+	cfg.LiveTrading = true
+	flagJSON = false
+	submitConfirmIn = strings.NewReader("submit\n")
+	isApprovedLiveSubmitTransport = func(_ exchange.Exchange, _ *config.Config) bool { return false }
+	rec = &stubReconciler{ok: true, latest: reconciler.Result{Status: reconciler.StatusOK}}
+
+	stdout := captureStdout(t, func() {
+		err := runSubmit(context.Background())
+		if err == nil {
+			t.Fatal("runSubmit error = nil, want pre-submit policy denial")
+		}
+		if !strings.Contains(err.Error(), "submit blocked by pre-submit policy") {
+			t.Fatalf("error = %q, want pre-submit denial", err.Error())
+		}
+	})
+	if gx.submitCalled {
+		t.Fatal("exchange Submit called despite pre-submit policy denial")
+	}
+	for _, want := range []string{
+		"LIVE SUBMIT DENIED",
+		"outcome=deny primary_reason=transport_not_approved",
+		"payload_hash_matched=true",
+		"approval_freshness=fresh",
+		"confirmation_freshness=fresh",
+		"duplicate_state=not_checked",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("stdout = %q, missing %q", stdout, want)
+		}
+	}
+}
+
 func TestRunSubmit_BlockedWhenLiveTradingDisabled(t *testing.T) {
 	gx, _ := setupDecisionGateCommandTest(t)
 	cfg.LiveTrading = false
