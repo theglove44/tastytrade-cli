@@ -515,5 +515,6 @@ func init() {
 		killCmd,
 		resumeCmd,
 		watchCmd,
+		submitStateCmd,
 	)
 }

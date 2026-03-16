@@ -77,3 +77,5 @@ Examples:
   - compact operator-visible final-boundary denial diagnostics for live submit
 - `MI-2026-03-15-phase3c-restart-recovery-semantics.md`
   - fail-closed restart/recovery semantics for uncertain or in-flight live submit state
+- `MI-2026-03-15-phase3c-submit-state-inspection-reset.md`
+  - operator-only inspection and explicit local reset workflow for persisted submit safety state

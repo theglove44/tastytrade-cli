@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"go.uber.org/zap"
 )
@@ -52,8 +53,11 @@ type DuplicateSubmitCheckResult struct {
 }
 
 type submitIdentityRecord struct {
-	Identity SubmitIdentity      `json:"identity"`
-	State    SubmitIdentityState `json:"state"`
+	Identity   SubmitIdentity            `json:"identity"`
+	State      SubmitIdentityState       `json:"state"`
+	CreatedAt  time.Time                 `json:"created_at,omitempty"`
+	UpdatedAt  time.Time                 `json:"updated_at,omitempty"`
+	DenyReason DuplicateSubmitDenyReason `json:"deny_reason,omitempty"`
 }
 
 type persistedSubmitIdentities struct {
@@ -204,7 +208,8 @@ func (r *submitIdentityRegistry) reserve(identity SubmitIdentity) DuplicateSubmi
 		}
 	}
 
-	r.records[identity.Key] = submitIdentityRecord{Identity: identity, State: SubmitIdentityInFlight}
+	now := preSubmitPolicyNow()
+	r.records[identity.Key] = submitIdentityRecord{Identity: identity, State: SubmitIdentityInFlight, CreatedAt: now, UpdatedAt: now}
 	if err := r.saveLocked(); err != nil {
 		delete(r.records, identity.Key)
 		r.uncertain = true
@@ -232,12 +237,50 @@ func (r *submitIdentityRegistry) markSubmitted(identity SubmitIdentity) Duplicat
 		return DuplicateSubmitCheckResult{Allowed: false, DenyReason: DuplicateSubmitStateMismatch, State: existing.State}
 	}
 	existing.State = SubmitIdentitySubmitted
+	existing.UpdatedAt = preSubmitPolicyNow()
 	r.records[identity.Key] = existing
 	if err := r.saveLocked(); err != nil {
 		r.uncertain = true
 		return DuplicateSubmitCheckResult{Allowed: false, DenyReason: DuplicateSubmitRestartUnknown, State: existing.State}
 	}
 	return DuplicateSubmitCheckResult{Allowed: true, State: SubmitIdentitySubmitted}
+}
+
+func (r *submitIdentityRegistry) inspect() ([]SubmitStateRecordView, DuplicateSubmitDenyReason, error) {
+	if r == nil {
+		return nil, DuplicateSubmitUnknownState, errors.New("nil submit identity registry")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err := r.ensureLoaded(); err != nil || r.uncertain {
+		return nil, DuplicateSubmitRestartUnknown, fmt.Errorf("persisted submit state uncertain")
+	}
+	views := make([]SubmitStateRecordView, 0, len(r.records))
+	for _, record := range r.records {
+		views = append(views, recordView(record))
+	}
+	sortRecordViews(views)
+	return views, "", nil
+}
+
+func (r *submitIdentityRegistry) clear(identityKey string) error {
+	if r == nil || strings.TrimSpace(identityKey) == "" {
+		return fmt.Errorf("submit-state clear denied: %s", DuplicateSubmitUnknownState)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err := r.ensureLoaded(); err != nil || r.uncertain {
+		return fmt.Errorf("submit-state clear denied: %s", DuplicateSubmitRestartUnknown)
+	}
+	if _, ok := r.records[identityKey]; !ok {
+		return fmt.Errorf("submit-state clear denied: %s", DuplicateSubmitUnknownState)
+	}
+	delete(r.records, identityKey)
+	if err := r.saveLocked(); err != nil {
+		r.uncertain = true
+		return fmt.Errorf("submit-state clear denied: %s", DuplicateSubmitRestartUnknown)
+	}
+	return nil
 }
 
 func logDuplicateSubmitCheck(log *zap.Logger, identity SubmitIdentity, result DuplicateSubmitCheckResult) {
