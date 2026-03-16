@@ -2,6 +2,11 @@
 
 This directory is the audit trail for investigation work, debugging passes, and surgical fixes.
 
+## Primary runbook
+
+- `../live-submit-safety-runbook.md`
+  - single primary runbook for the full Phase 3C live submit safety chain and operator workflow
+
 ## Naming convention
 
 Use one markdown file per issue / incident:
@@ -79,3 +84,5 @@ Examples:
   - fail-closed restart/recovery semantics for uncertain or in-flight live submit state
 - `MI-2026-03-15-phase3c-submit-state-inspection-reset.md`
   - operator-only inspection and explicit local reset workflow for persisted submit safety state
+- `MI-2026-03-15-phase3c-runbook-consolidation.md`
+  - consolidates the full Phase 3C live submit safety model into one primary runbook
