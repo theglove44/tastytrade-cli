@@ -33,6 +33,9 @@ type Exchange interface {
 	// capped to the requested item count.
 	RecentOrders(ctx context.Context, accountID string, limit int) ([]models.Order, error)
 
+	// Order returns one broker order by its canonical broker order ID.
+	Order(ctx context.Context, accountID, orderID string) (models.Order, error)
+
 	// DryRun simulates an order submission without placing a live order.
 	// idempotencyKey must be a pre-generated UUID that has already been written
 	// to the intent log — this guarantees the logged key and the

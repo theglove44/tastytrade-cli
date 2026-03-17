@@ -1,0 +1,1 @@
+For any work that relies on the tastytrade API, use `/Users/christaylor/Projects/tastytrade-docs` as the authoritative reference documentation source. Cross-check relevant documents there before implementing changes, describing behavior, or validating API flows. Adhere to the documented processes and constraints from that directory.

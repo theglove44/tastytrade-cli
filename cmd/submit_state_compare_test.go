@@ -30,6 +30,14 @@ func (s *submitStateCompareTestExchange) RecentOrders(_ context.Context, _ strin
 	s.recentLimit = limit
 	return s.recentOrders, nil
 }
+func (s *submitStateCompareTestExchange) Order(_ context.Context, _ string, orderID string) (models.Order, error) {
+	for _, order := range append(append([]models.Order{}, s.liveOrders...), s.recentOrders...) {
+		if order.ID == orderID {
+			return order, nil
+		}
+	}
+	return models.Order{}, nil
+}
 func (s *submitStateCompareTestExchange) DryRun(context.Context, string, models.NewOrder, string) (models.DryRunResult, error) {
 	return models.DryRunResult{}, nil
 }
