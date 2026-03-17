@@ -43,7 +43,7 @@ func TestRunSubmitStateCompare_JSON_FilteredByOutcomeAndAccount(t *testing.T) {
 			t.Fatalf("runSubmitStateCompare: %v", err)
 		}
 	})
-	for _, want := range []string{"\"account_number\": \"ACCT-1\"", "\"outcome_filter\": \"local_present_broker_match\"", "\"count\": 1", "\"broker_order_id\": \"BROKER-1\""} {
+	for _, want := range []string{"\"account_number\": \"ACCT-1\"", "\"outcome_filter\": \"local_present_broker_match\"", "\"count\": 1", "\"broker_order_id\": \"BROKER-1\"", "\"recommended_actions\":"} {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("stdout = %q, missing %q", stdout, want)
 		}

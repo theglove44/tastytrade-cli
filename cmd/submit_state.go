@@ -38,10 +38,11 @@ type SubmitStateInspectOutput struct {
 
 var submitStateCmd = &cobra.Command{
 	Use:   "submit-state",
-	Short: "Inspect or clear persisted live submit safety state",
-	Long: `Operator-only commands for inspecting or clearing persisted live submit safety state.
+	Short: "Inspect, compare, or clear persisted live submit safety state",
+	Long: `Operator-only commands for inspecting, comparing, or clearing persisted live submit safety state.
 
-These commands only affect local duplicate-submit / restart-recovery safety state.
+Use these commands with broker order inspection for manual reconciliation workflows.
+They only affect local duplicate-submit / restart-recovery safety state.
 They do NOT confirm broker outcome or reconcile broker-side orders.`,
 }
 

@@ -4,10 +4,12 @@
 
 - `live-submit-safety-runbook.md`
   - primary operator/developer runbook for the current Phase 3C live submit safety model
+- `manual-reconciliation-runbook.md`
+  - primary operator/developer runbook for the current manual reconciliation workflow built from the read-only Phase 4/5A surfaces
 - `broker-order-inspection.md`
-  - primary read-only Phase 4A broker order inspection guide
+  - read-only Phase 4A broker order inspection guide
 - `local-vs-broker-order-comparison.md`
-  - primary read-only Phase 4B/4C guide for advisory local vs broker order comparison, summaries, and filters
+  - read-only Phase 4B/4C/5A guide for advisory local vs broker order comparison, summaries, filters, and recommended next actions
 
 ## MI / implementation trail
 

@@ -43,13 +43,14 @@ type SubmitStateCompareSummary struct {
 }
 
 type SubmitStateCompareEntry struct {
-	Outcome        string `json:"outcome"`
-	SubmitIdentity string `json:"submit_identity,omitempty"`
-	LocalState     string `json:"local_state,omitempty"`
-	OrderHash      string `json:"order_hash,omitempty"`
-	BrokerOrderID  string `json:"broker_order_id,omitempty"`
-	BrokerStatus   string `json:"broker_status,omitempty"`
-	Note           string `json:"note"`
+	Outcome            string   `json:"outcome"`
+	SubmitIdentity     string   `json:"submit_identity,omitempty"`
+	LocalState         string   `json:"local_state,omitempty"`
+	OrderHash          string   `json:"order_hash,omitempty"`
+	BrokerOrderID      string   `json:"broker_order_id,omitempty"`
+	BrokerStatus       string   `json:"broker_status,omitempty"`
+	Note               string   `json:"note"`
+	RecommendedActions []string `json:"recommended_actions,omitempty"`
 }
 
 var submitStateCompareCmd = &cobra.Command{
@@ -58,7 +59,9 @@ var submitStateCompareCmd = &cobra.Command{
 	Long: `Advisory local vs broker order comparison for manual troubleshooting.
 
 This command compares local persisted submit safety state with broker-visible order state,
-then surfaces concise summary counts and optional advisory filters.
+then surfaces concise summary counts, optional advisory filters, and recommended next actions.
+Use it as part of a manual reconciliation workflow together with submit-state inspect
+and broker-orders live/recent.
 It is read-only only: no reconciliation, no local state mutation, and no broker mutation.
 Comparison results are advisory/manual only and cannot confirm broker truth conclusively.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -158,6 +161,9 @@ func runSubmitStateCompare(ctx context.Context) error {
 		}
 		fmt.Println()
 		fmt.Printf("  note=%s\n", result.Note)
+		for _, action := range result.RecommendedActions {
+			fmt.Printf("  next_action=%s\n", action)
+		}
 	}
 	fmt.Println("  comparison is advisory/manual only; no reconciliation or broker confirmation is performed")
 	return nil
@@ -190,7 +196,7 @@ func compareLocalSubmitStateToBroker(accountID string, local []SubmitStateRecord
 		sameHashLocals := localByHash[record.OrderHash]
 		switch {
 		case len(matches) == 1 && len(sameHashLocals) == 1:
-			results = append(results, SubmitStateCompareEntry{
+			results = append(results, withRecommendedActions(SubmitStateCompareEntry{
 				Outcome:        ComparisonPlausibleMatch,
 				SubmitIdentity: record.SubmitIdentity,
 				LocalState:     record.State,
@@ -198,50 +204,86 @@ func compareLocalSubmitStateToBroker(accountID string, local []SubmitStateRecord
 				BrokerOrderID:  matches[0].ID,
 				BrokerStatus:   matches[0].Status,
 				Note:           "exact local order_hash matched one broker-visible order; plausible match only",
-			})
+			}))
 		case len(matches) == 0 && record.State == string(SubmitIdentityInFlight):
-			results = append(results, SubmitStateCompareEntry{
+			results = append(results, withRecommendedActions(SubmitStateCompareEntry{
 				Outcome:        ComparisonLocalNoBrokerMatch,
 				SubmitIdentity: record.SubmitIdentity,
 				LocalState:     record.State,
 				OrderHash:      record.OrderHash,
 				Note:           "local state remains in_flight but no exact broker-visible match was found in current broker inspection scope",
-			})
+			}))
 		default:
-			results = append(results, SubmitStateCompareEntry{
+			results = append(results, withRecommendedActions(SubmitStateCompareEntry{
 				Outcome:        ComparisonAmbiguous,
 				SubmitIdentity: record.SubmitIdentity,
 				LocalState:     record.State,
 				OrderHash:      record.OrderHash,
 				Note:           buildLocalAmbiguousNote(record, matches, sameHashLocals),
-			})
+			}))
 		}
 	}
 
 	for _, order := range brokerOrders {
 		hash := brokerHashByID[order.ID]
 		if hash == "" {
-			results = append(results, SubmitStateCompareEntry{
+			results = append(results, withRecommendedActions(SubmitStateCompareEntry{
 				Outcome:       ComparisonAmbiguous,
 				BrokerOrderID: order.ID,
 				BrokerStatus:  order.Status,
 				Note:          "broker order could not be converted into a comparable local fingerprint",
-			})
+			}))
 			continue
 		}
 		if len(localByHash[hash]) == 0 {
-			results = append(results, SubmitStateCompareEntry{
+			results = append(results, withRecommendedActions(SubmitStateCompareEntry{
 				Outcome:       ComparisonBrokerNoLocalState,
 				BrokerOrderID: order.ID,
 				BrokerStatus:  order.Status,
 				OrderHash:     hash,
 				Note:          "broker-visible order had no exact local persisted order_hash match for the selected account",
-			})
+			}))
 		}
 	}
 
 	sortSubmitStateCompareEntries(results)
 	return results, brokerOrders
+}
+
+func recommendedActionsForOutcome(outcome string) []string {
+	switch outcome {
+	case ComparisonPlausibleMatch:
+		return []string{
+			"inspect the broker order details and current status manually",
+			"keep local submit safety state until manual verification is complete",
+			"only use submit-state clear after manual verification if local safety reset is still needed",
+		}
+	case ComparisonLocalNoBrokerMatch:
+		return []string{
+			"re-check broker visibility using broker-orders live and broker-orders recent",
+			"treat local state as uncertain until manual verification is complete",
+			"do not retry or clear local state automatically",
+		}
+	case ComparisonBrokerNoLocalState:
+		return []string{
+			"inspect the broker order details and account activity manually",
+			"confirm whether the broker-visible order is expected before taking any local action",
+			"do not infer that local safety state should be created or cleared automatically",
+		}
+	case ComparisonAmbiguous:
+		return []string{
+			"inspect local submit-state records and broker order details manually",
+			"narrow the comparison using account, outcome, and limit filters if helpful",
+			"do not clear local state or assume broker truth from an ambiguous result",
+		}
+	default:
+		return nil
+	}
+}
+
+func withRecommendedActions(entry SubmitStateCompareEntry) SubmitStateCompareEntry {
+	entry.RecommendedActions = recommendedActionsForOutcome(entry.Outcome)
+	return entry
 }
 
 func resolveSubmitStateCompareAccountID(ctx context.Context) (string, error) {

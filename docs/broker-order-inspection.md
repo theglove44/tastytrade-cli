@@ -2,6 +2,8 @@
 
 Phase 4A adds a minimal read-only broker-facing inspection workflow so operators can inspect tastytrade order state from the CLI before any reconciliation or broader execution capability is introduced.
 
+For the full consolidated operator workflow, see `manual-reconciliation-runbook.md`.
+
 ## Scope
 
 This phase is strictly read-only.
