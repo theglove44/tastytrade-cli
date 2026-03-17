@@ -128,17 +128,7 @@ func runBrokerOrdersDetail(ctx context.Context) error {
 	if flagJSON {
 		return printJSON(out)
 	}
-	fmt.Println("BROKER ORDER DETAIL")
-	fmt.Printf("  account=%s\n", out.AccountNumber)
-	fmt.Printf("  id=%s status=%s type=%s tif=%s\n", out.Order.ID, out.Order.Status, out.Order.OrderType, out.Order.TimeInForce)
-	fmt.Printf("  price=%s price_effect=%s\n", out.Order.Price, out.Order.PriceEffect)
-	if out.Order.ReceivedAt != "" || out.Order.UpdatedAt != "" || out.Order.FilledAt != "" || out.Order.CancelledAt != "" {
-		fmt.Printf("  received_at=%s updated_at=%s filled_at=%s cancelled_at=%s\n", out.Order.ReceivedAt, out.Order.UpdatedAt, out.Order.FilledAt, out.Order.CancelledAt)
-	}
-	for _, leg := range out.Order.Legs {
-		fmt.Printf("  leg: action=%s symbol=%s instrument_type=%s quantity=%s\n", leg.Action, leg.Symbol, leg.InstrumentType, leg.Quantity)
-	}
-	return nil
+	return renderBrokerOrderDetail(out)
 }
 
 func validateBrokerOrderID(orderID string) error {
@@ -148,6 +138,53 @@ func validateBrokerOrderID(orderID string) error {
 	}
 	if likelyLocalSubmitIdentityPattern.MatchString(strings.ToLower(trimmed)) {
 		return fmt.Errorf("canonical broker order id required; got a value that looks like a local submit identity")
+	}
+	return nil
+}
+
+func renderBrokerOrderDetail(out BrokerOrderDetailOutput) error {
+	fmt.Println("BROKER ORDER DETAIL")
+	fmt.Println("  order:")
+	fmt.Printf("    account=%s\n", out.AccountNumber)
+	fmt.Printf("    id=%s\n", out.Order.ID)
+	fmt.Printf("    status=%s\n", out.Order.Status)
+	fmt.Printf("    type=%s\n", out.Order.OrderType)
+	fmt.Printf("    time_in_force=%s\n", out.Order.TimeInForce)
+	if out.Order.Price != "" || out.Order.PriceEffect != "" {
+		fmt.Println("  pricing:")
+		if out.Order.Price != "" {
+			fmt.Printf("    price=%s\n", out.Order.Price)
+		}
+		if out.Order.PriceEffect != "" {
+			fmt.Printf("    price_effect=%s\n", out.Order.PriceEffect)
+		}
+	}
+	if out.Order.ReceivedAt != "" || out.Order.UpdatedAt != "" || out.Order.FilledAt != "" || out.Order.CancelledAt != "" {
+		fmt.Println("  timestamps:")
+		if out.Order.ReceivedAt != "" {
+			fmt.Printf("    received_at=%s\n", out.Order.ReceivedAt)
+		}
+		if out.Order.UpdatedAt != "" {
+			fmt.Printf("    updated_at=%s\n", out.Order.UpdatedAt)
+		}
+		if out.Order.FilledAt != "" {
+			fmt.Printf("    filled_at=%s\n", out.Order.FilledAt)
+		}
+		if out.Order.CancelledAt != "" {
+			fmt.Printf("    cancelled_at=%s\n", out.Order.CancelledAt)
+		}
+	}
+	fmt.Println("  legs:")
+	if len(out.Order.Legs) == 0 {
+		fmt.Println("    (none)")
+		return nil
+	}
+	for i, leg := range out.Order.Legs {
+		fmt.Printf("    %d) %s\n", i+1, leg.Symbol)
+		fmt.Printf("       action=%s quantity=%s\n", leg.Action, leg.Quantity)
+		if leg.InstrumentType != "" {
+			fmt.Printf("       instrument_type=%s\n", leg.InstrumentType)
+		}
 	}
 	return nil
 }

@@ -78,6 +78,21 @@ func sampleBrokerOrder(status string) models.Order {
 	}
 }
 
+func sampleBrokerOrderWithoutOptionalFields(status string) models.Order {
+	return models.Order{
+		ID:            "ord-2",
+		AccountNumber: "TEST123",
+		Status:        status,
+		OrderType:     "Market",
+		TimeInForce:   "Day",
+		Legs: []models.OrderLeg{{
+			Symbol:   "SPY",
+			Quantity: decimal.RequireFromString("2"),
+			Action:   "Sell to Close",
+		}},
+	}
+}
+
 func TestBuildBrokerOrderView_ShapesKeyFields(t *testing.T) {
 	view := buildBrokerOrderView(sampleBrokerOrder("Filled"))
 	if view.ID != "ord-1" || view.Status != "Filled" || view.Price != "1.23" {
@@ -133,6 +148,51 @@ func TestRunBrokerOrdersLive_HumanReadable(t *testing.T) {
 	for _, want := range []string{"BROKER ORDERS (live)", "Live", "AAPL"} {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("stdout = %q, missing %q", stdout, want)
+		}
+	}
+}
+
+func TestRenderBrokerOrderDetail_HumanReadable(t *testing.T) {
+	stdout := captureStdout(t, func() {
+		if err := renderBrokerOrderDetail(BrokerOrderDetailOutput{AccountNumber: "TEST123", Order: buildBrokerOrderView(sampleBrokerOrder("Filled"))}); err != nil {
+			t.Fatalf("renderBrokerOrderDetail: %v", err)
+		}
+	})
+	for _, want := range []string{
+		"BROKER ORDER DETAIL",
+		"  order:",
+		"    account=TEST123",
+		"    id=ord-1",
+		"    status=Filled",
+		"  pricing:",
+		"    price=1.23",
+		"  timestamps:",
+		"    filled_at=2026-03-15T12:59:00Z",
+		"  legs:",
+		"    1) AAPL",
+		"       action=Buy to Open quantity=1",
+		"       instrument_type=Equity",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("stdout = %q, missing %q", stdout, want)
+		}
+	}
+}
+
+func TestRenderBrokerOrderDetail_OmitsAbsentOptionalFields(t *testing.T) {
+	stdout := captureStdout(t, func() {
+		if err := renderBrokerOrderDetail(BrokerOrderDetailOutput{AccountNumber: "TEST123", Order: buildBrokerOrderView(sampleBrokerOrderWithoutOptionalFields("Cancelled"))}); err != nil {
+			t.Fatalf("renderBrokerOrderDetail: %v", err)
+		}
+	})
+	for _, want := range []string{"status=Cancelled", "type=Market", "    1) SPY", "action=Sell to Close quantity=2"} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("stdout = %q, missing %q", stdout, want)
+		}
+	}
+	for _, unwanted := range []string{"filled_at=", "cancelled_at=", "instrument_type=", "received_at= updated_at="} {
+		if strings.Contains(stdout, unwanted) {
+			t.Fatalf("stdout = %q, unexpected %q", stdout, unwanted)
 		}
 	}
 }
