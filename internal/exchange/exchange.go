@@ -26,8 +26,12 @@ type Exchange interface {
 	// Positions returns all open positions for the given account.
 	Positions(ctx context.Context, accountID string) ([]models.Position, error)
 
-	// Orders returns all live (open) orders for the given account.
+	// Orders returns all live/open orders for the given account.
 	Orders(ctx context.Context, accountID string) ([]models.Order, error)
+
+	// RecentOrders returns recent broker-facing order state for the given account,
+	// capped to the requested item count.
+	RecentOrders(ctx context.Context, accountID string, limit int) ([]models.Order, error)
 
 	// DryRun simulates an order submission without placing a live order.
 	// idempotencyKey must be a pre-generated UUID that has already been written

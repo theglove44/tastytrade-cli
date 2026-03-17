@@ -38,6 +38,10 @@ func (g *gateTestExchange) Orders(context.Context, string) ([]models.Order, erro
 	return nil, nil
 }
 
+func (g *gateTestExchange) RecentOrders(context.Context, string, int) ([]models.Order, error) {
+	return nil, nil
+}
+
 func (g *gateTestExchange) DryRun(context.Context, string, models.NewOrder, string) (models.DryRunResult, error) {
 	g.dryRunCalled = true
 	return models.DryRunResult{

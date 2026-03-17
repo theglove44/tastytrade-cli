@@ -510,6 +510,7 @@ func init() {
 		accountsCmd,
 		positionsCmd,
 		ordersCmd,
+		brokerOrdersCmd,
 		submitCmd,
 		dryRunCmd,
 		killCmd,

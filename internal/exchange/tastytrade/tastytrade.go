@@ -149,6 +149,52 @@ func (e *Exchange) Orders(ctx context.Context, accountID string) ([]models.Order
 	return all, nil
 }
 
+// RecentOrders returns recent broker-facing order state for the account.
+// It queries the search-orders endpoint and stops once limit results are collected.
+func (e *Exchange) RecentOrders(ctx context.Context, accountID string, limit int) ([]models.Order, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	var all []models.Order
+	page := 0
+	totalPages := 1
+
+	for page < totalPages && len(all) < limit {
+		url := fmt.Sprintf("%s/accounts/%s/orders?sort=Desc&per-page=%d&page-offset=%d", e.baseURL, accountID, limit, page)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return nil, fmt.Errorf("exchange.RecentOrders: build request page %d: %w", page, err)
+		}
+
+		resp, err := e.cl.Do(ctx, req, client.FamilyRead)
+		if err != nil {
+			return nil, fmt.Errorf("exchange.RecentOrders: page %d: %w", page, err)
+		}
+
+		data, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("exchange.RecentOrders: HTTP %d: %s", resp.StatusCode, data)
+		}
+
+		var env models.ItemsEnvelope[models.Order]
+		if err := json.Unmarshal(data, &env); err != nil {
+			return nil, fmt.Errorf("exchange.RecentOrders: parse page %d: %w", page, err)
+		}
+
+		all = append(all, env.Data.Items...)
+		if p := env.Data.Pagination; p != nil && p.TotalPages > 0 {
+			totalPages = p.TotalPages
+		}
+		page++
+	}
+	if len(all) > limit {
+		all = all[:limit]
+	}
+	return all, nil
+}
+
 // DryRun submits the order to /orders/dry-run without placing a live trade.
 // idempotencyKey is the pre-generated UUID recorded in the intent log by the
 // command layer — passing it here ensures the logged key and the
