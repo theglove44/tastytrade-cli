@@ -1,6 +1,6 @@
 # Local vs Broker Order Comparison
 
-Phase 4B adds a minimal read-only comparison workflow for manual troubleshooting.
+Phases 4B/4C add a minimal read-only comparison workflow for manual troubleshooting, then extend it with concise summary counts and light filters.
 
 The goal is simple: compare local persisted submit safety state from Phase 3C against broker-visible order state from Phase 4A, then surface concise advisory outcomes for operators.
 
@@ -34,6 +34,12 @@ JSON:
 tt submit-state compare --limit 25 --json
 ```
 
+Optional filters:
+
+```bash
+tt submit-state compare --account ACCT-1 --outcome local_present_broker_match --limit 25
+```
+
 ## What it compares
 
 For the selected account, the CLI:
@@ -47,7 +53,7 @@ For the selected account, the CLI:
 
 ## Advisory outcomes
 
-The minimal comparison flow currently surfaces these labeled outcomes:
+The comparison flow surfaces these labeled outcomes:
 
 - `local_present_broker_match`
   - local persisted state exists and one plausible broker-visible match was found
@@ -57,6 +63,33 @@ The minimal comparison flow currently surfaces these labeled outcomes:
   - a broker-visible order was found but there was no exact local persisted `order_hash` match for the selected account
 - `ambiguous`
   - the comparison could not be classified cleanly, for example because multiple broker orders shared the same comparable fingerprint, multiple local records shared the same `order_hash`, or a broker order could not be converted into a comparable fingerprint
+
+## Summary and filters
+
+Phase 4C adds a slightly richer advisory view over those outcomes.
+
+The command now:
+
+- prints deterministic summary counts by outcome
+- supports `--account` to explicitly choose the account being compared
+- supports `--outcome` to filter returned comparison rows to one outcome class
+- continues to use `--limit` to control the recent broker-order inspection slice feeding the comparison
+
+In JSON mode, the output includes:
+
+- `account_number`
+- `broker_source`
+- optional `outcome_filter`
+- `local_count`
+- `broker_count`
+- `summary` counts by outcome
+- filtered `results`
+
+Important behavior:
+
+- summary counts reflect the currently returned result set after any `--outcome` filter is applied
+- `--account` is still a single-account advisory view, not a multi-account reconciliation report
+- filtering does not change broker or local state; it only narrows the advisory display
 
 ## What the comparison can conclude
 

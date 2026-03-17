@@ -15,18 +15,27 @@ func setupSubmitStateTest(t *testing.T) *submitIdentityRegistry {
 	origFlagJSON := flagJSON
 	origFlagSubmitStateIdentity := flagSubmitStateIdentity
 	origFlagSubmitStateYes := flagSubmitStateYes
+	origFlagSubmitStateCompareLimit := flagSubmitStateCompareLimit
+	origFlagSubmitStateCompareAccount := flagSubmitStateCompareAccount
+	origFlagSubmitStateCompareOutcome := flagSubmitStateCompareOutcome
 	origConfirm := submitStateConfirmIn
 	origNow := preSubmitPolicyNow
 	t.Cleanup(func() {
 		flagJSON = origFlagJSON
 		flagSubmitStateIdentity = origFlagSubmitStateIdentity
 		flagSubmitStateYes = origFlagSubmitStateYes
+		flagSubmitStateCompareLimit = origFlagSubmitStateCompareLimit
+		flagSubmitStateCompareAccount = origFlagSubmitStateCompareAccount
+		flagSubmitStateCompareOutcome = origFlagSubmitStateCompareOutcome
 		submitStateConfirmIn = origConfirm
 		preSubmitPolicyNow = origNow
 	})
 	flagJSON = false
 	flagSubmitStateIdentity = ""
 	flagSubmitStateYes = false
+	flagSubmitStateCompareLimit = 25
+	flagSubmitStateCompareAccount = ""
+	flagSubmitStateCompareOutcome = ""
 	submitStateConfirmIn = strings.NewReader("")
 	preSubmitPolicyNow = func() time.Time { return time.Date(2026, 3, 15, 12, 0, 0, 0, time.UTC) }
 	liveSubmitIdentities = r

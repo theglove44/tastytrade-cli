@@ -9,7 +9,7 @@ This directory is the audit trail for investigation work, debugging passes, and 
 - `../broker-order-inspection.md`
   - primary read-only Phase 4A guide for broker-facing order inspection commands
 - `../local-vs-broker-order-comparison.md`
-  - primary read-only Phase 4B guide for advisory local vs broker order comparison
+  - primary read-only Phase 4B/4C guide for advisory local vs broker order comparison, summaries, and filters
 
 ## Naming convention
 
@@ -94,3 +94,7 @@ Examples:
   - initial read-only broker-facing order inspection slice for live/open and recent orders
 - `MI-2026-03-15-phase4b-local-vs-broker-order-comparison.md`
   - initial read-only advisory comparison between local persisted submit state and broker-visible order state
+- `MI-2026-03-15-phase4c-broker-comparison-summary-and-filters.md`
+  - extends advisory local-vs-broker comparison with deterministic summary counts and light filters
+- `MI-2026-03-15-phase4-branch-cleanup-and-handoff.md`
+  - final tidy-up, merge-readiness review, and handoff guidance after completing Phase 4A/4B/4C

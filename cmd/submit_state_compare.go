@@ -11,7 +11,11 @@ import (
 	"github.com/theglove44/tastytrade-cli/internal/models"
 )
 
-var flagSubmitStateCompareLimit int
+var (
+	flagSubmitStateCompareLimit   int
+	flagSubmitStateCompareAccount string
+	flagSubmitStateCompareOutcome string
+)
 
 const (
 	ComparisonPlausibleMatch     = "local_present_broker_match"
@@ -23,12 +27,19 @@ const (
 
 // SubmitStateCompareOutput is the stable --json schema for local vs broker comparison.
 type SubmitStateCompareOutput struct {
-	Advisory      string                    `json:"advisory"`
-	AccountNumber string                    `json:"account_number"`
-	BrokerSource  string                    `json:"broker_source"`
-	LocalCount    int                       `json:"local_count"`
-	BrokerCount   int                       `json:"broker_count"`
-	Results       []SubmitStateCompareEntry `json:"results"`
+	Advisory      string                      `json:"advisory"`
+	AccountNumber string                      `json:"account_number"`
+	BrokerSource  string                      `json:"broker_source"`
+	OutcomeFilter string                      `json:"outcome_filter,omitempty"`
+	LocalCount    int                         `json:"local_count"`
+	BrokerCount   int                         `json:"broker_count"`
+	Summary       []SubmitStateCompareSummary `json:"summary"`
+	Results       []SubmitStateCompareEntry   `json:"results"`
+}
+
+type SubmitStateCompareSummary struct {
+	Outcome string `json:"outcome"`
+	Count   int    `json:"count"`
 }
 
 type SubmitStateCompareEntry struct {
@@ -43,10 +54,11 @@ type SubmitStateCompareEntry struct {
 
 var submitStateCompareCmd = &cobra.Command{
 	Use:   "compare",
-	Short: "Advisory local vs broker order comparison",
+	Short: "Advisory local vs broker order comparison with summary/filter support",
 	Long: `Advisory local vs broker order comparison for manual troubleshooting.
 
-This command compares local persisted submit safety state with broker-visible order state.
+This command compares local persisted submit safety state with broker-visible order state,
+then surfaces concise summary counts and optional advisory filters.
 It is read-only only: no reconciliation, no local state mutation, and no broker mutation.
 Comparison results are advisory/manual only and cannot confirm broker truth conclusively.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -56,12 +68,17 @@ Comparison results are advisory/manual only and cannot confirm broker truth conc
 
 func init() {
 	submitStateCompareCmd.Flags().IntVar(&flagSubmitStateCompareLimit, "limit", 25, "Maximum recent broker orders to include in comparison")
+	submitStateCompareCmd.Flags().StringVar(&flagSubmitStateCompareAccount, "account", "", "Account ID to compare (overrides configured/default account selection)")
+	submitStateCompareCmd.Flags().StringVar(&flagSubmitStateCompareOutcome, "outcome", "", "Optional outcome filter: local_present_broker_match, local_uncertain_no_broker_match, broker_order_no_local_state, ambiguous")
 	submitStateCmd.AddCommand(submitStateCompareCmd)
 }
 
 func runSubmitStateCompare(ctx context.Context) error {
-	accountID, err := resolveAccountID(ctx, "submit-state compare")
+	accountID, err := resolveSubmitStateCompareAccountID(ctx)
 	if err != nil {
+		return err
+	}
+	if err := validateSubmitStateCompareOutcomeFilter(flagSubmitStateCompareOutcome); err != nil {
 		return err
 	}
 
@@ -95,12 +112,16 @@ func runSubmitStateCompare(ctx context.Context) error {
 	}
 
 	results, brokerOrders := compareLocalSubmitStateToBroker(accountID, localRecords, liveOrders, recentOrders)
+	results = filterSubmitStateCompareResultsByOutcome(results, flagSubmitStateCompareOutcome)
+	summary := summarizeSubmitStateCompareResults(results)
 	out := SubmitStateCompareOutput{
 		Advisory:      comparisonAdvisoryDisclaimer,
 		AccountNumber: accountID,
 		BrokerSource:  fmt.Sprintf("live+recent(limit=%d)", limit),
+		OutcomeFilter: flagSubmitStateCompareOutcome,
 		LocalCount:    countRecordsForAccount(localRecords, accountID),
 		BrokerCount:   len(brokerOrders),
+		Summary:       summary,
 		Results:       results,
 	}
 	if flagJSON {
@@ -109,6 +130,13 @@ func runSubmitStateCompare(ctx context.Context) error {
 	fmt.Println("LOCAL VS BROKER ORDER COMPARISON")
 	fmt.Println("  advisory=manual_only")
 	fmt.Printf("  account=%s broker_source=%s local=%d broker=%d\n", out.AccountNumber, out.BrokerSource, out.LocalCount, out.BrokerCount)
+	if out.OutcomeFilter != "" {
+		fmt.Printf("  outcome_filter=%s\n", out.OutcomeFilter)
+	}
+	fmt.Println("  summary:")
+	for _, item := range out.Summary {
+		fmt.Printf("    %s=%d\n", item.Outcome, item.Count)
+	}
 	if len(out.Results) == 0 {
 		fmt.Println("  no comparison results for the selected account")
 		fmt.Println("  comparison is advisory only and does not confirm broker truth")
@@ -214,6 +242,58 @@ func compareLocalSubmitStateToBroker(accountID string, local []SubmitStateRecord
 
 	sortSubmitStateCompareEntries(results)
 	return results, brokerOrders
+}
+
+func resolveSubmitStateCompareAccountID(ctx context.Context) (string, error) {
+	if strings.TrimSpace(flagSubmitStateCompareAccount) != "" {
+		return strings.TrimSpace(flagSubmitStateCompareAccount), nil
+	}
+	return resolveAccountID(ctx, "submit-state compare")
+}
+
+func validateSubmitStateCompareOutcomeFilter(outcome string) error {
+	switch strings.TrimSpace(outcome) {
+	case "", ComparisonPlausibleMatch, ComparisonLocalNoBrokerMatch, ComparisonBrokerNoLocalState, ComparisonAmbiguous:
+		return nil
+	default:
+		return fmt.Errorf("submit-state compare: unsupported outcome filter %q", outcome)
+	}
+}
+
+func filterSubmitStateCompareResultsByOutcome(results []SubmitStateCompareEntry, outcome string) []SubmitStateCompareEntry {
+	if strings.TrimSpace(outcome) == "" {
+		return results
+	}
+	filtered := make([]SubmitStateCompareEntry, 0, len(results))
+	for _, result := range results {
+		if result.Outcome == outcome {
+			filtered = append(filtered, result)
+		}
+	}
+	return filtered
+}
+
+func summarizeSubmitStateCompareResults(results []SubmitStateCompareEntry) []SubmitStateCompareSummary {
+	counts := map[string]int{
+		ComparisonAmbiguous:          0,
+		ComparisonBrokerNoLocalState: 0,
+		ComparisonLocalNoBrokerMatch: 0,
+		ComparisonPlausibleMatch:     0,
+	}
+	for _, result := range results {
+		counts[result.Outcome]++
+	}
+	ordered := []string{
+		ComparisonPlausibleMatch,
+		ComparisonLocalNoBrokerMatch,
+		ComparisonBrokerNoLocalState,
+		ComparisonAmbiguous,
+	}
+	summary := make([]SubmitStateCompareSummary, 0, len(ordered))
+	for _, outcome := range ordered {
+		summary = append(summary, SubmitStateCompareSummary{Outcome: outcome, Count: counts[outcome]})
+	}
+	return summary
 }
 
 func filterLocalRecordsByAccount(records []SubmitStateRecordView, accountID string) []SubmitStateRecordView {

@@ -131,10 +131,42 @@ func TestCompareLocalSubmitStateToBroker_AmbiguousMultipleBrokerMatches(t *testi
 	}
 }
 
+func TestSummarizeSubmitStateCompareResults_DeterministicCounts(t *testing.T) {
+	summary := summarizeSubmitStateCompareResults([]SubmitStateCompareEntry{
+		{Outcome: ComparisonBrokerNoLocalState},
+		{Outcome: ComparisonPlausibleMatch},
+		{Outcome: ComparisonPlausibleMatch},
+		{Outcome: ComparisonAmbiguous},
+	})
+	want := []SubmitStateCompareSummary{
+		{Outcome: ComparisonPlausibleMatch, Count: 2},
+		{Outcome: ComparisonLocalNoBrokerMatch, Count: 0},
+		{Outcome: ComparisonBrokerNoLocalState, Count: 1},
+		{Outcome: ComparisonAmbiguous, Count: 1},
+	}
+	if len(summary) != len(want) {
+		t.Fatalf("summary len = %d, want %d", len(summary), len(want))
+	}
+	for i := range want {
+		if summary[i] != want[i] {
+			t.Fatalf("summary[%d] = %+v, want %+v", i, summary[i], want[i])
+		}
+	}
+}
+
+func TestFilterSubmitStateCompareResultsByOutcome(t *testing.T) {
+	results := filterSubmitStateCompareResultsByOutcome([]SubmitStateCompareEntry{{Outcome: ComparisonPlausibleMatch}, {Outcome: ComparisonAmbiguous}}, ComparisonAmbiguous)
+	if len(results) != 1 || results[0].Outcome != ComparisonAmbiguous {
+		t.Fatalf("results = %+v, want only ambiguous", results)
+	}
+}
+
 func TestRunSubmitStateCompare_JSON(t *testing.T) {
 	r := setupSubmitStateTest(t)
-	oldCfg, oldEx, oldFlagJSON, oldLimit := cfg, ex, flagJSON, flagSubmitStateCompareLimit
-	defer func() { cfg, ex, flagJSON, flagSubmitStateCompareLimit = oldCfg, oldEx, oldFlagJSON, oldLimit }()
+	oldCfg, oldEx, oldFlagJSON, oldLimit, oldAccount, oldOutcome := cfg, ex, flagJSON, flagSubmitStateCompareLimit, flagSubmitStateCompareAccount, flagSubmitStateCompareOutcome
+	defer func() {
+		cfg, ex, flagJSON, flagSubmitStateCompareLimit, flagSubmitStateCompareAccount, flagSubmitStateCompareOutcome = oldCfg, oldEx, oldFlagJSON, oldLimit, oldAccount, oldOutcome
+	}()
 
 	order := models.NewOrder{
 		OrderType:   "Limit",
@@ -169,7 +201,7 @@ func TestRunSubmitStateCompare_JSON(t *testing.T) {
 	if stub.recentLimit != 7 {
 		t.Fatalf("recentLimit = %d, want 7", stub.recentLimit)
 	}
-	for _, want := range []string{"\"advisory\": \"advisory_manual_only\"", "\"outcome\": \"local_present_broker_match\"", "\"broker_order_id\": \"BROKER-1\""} {
+	for _, want := range []string{"\"advisory\": \"advisory_manual_only\"", "\"outcome\": \"local_present_broker_match\"", "\"broker_order_id\": \"BROKER-1\"", "\"summary\": ["} {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("stdout = %q, missing %q", stdout, want)
 		}
