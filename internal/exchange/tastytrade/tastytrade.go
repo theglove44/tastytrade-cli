@@ -50,11 +50,16 @@ func (e *Exchange) Accounts(ctx context.Context) ([]models.Account, error) {
 		return nil, fmt.Errorf("exchange.Accounts: HTTP %d: %s", resp.StatusCode, data)
 	}
 
-	var env models.ItemsEnvelope[models.Account]
+	var env models.ItemsEnvelope[models.AccountListItem]
 	if err := json.Unmarshal(data, &env); err != nil {
 		return nil, fmt.Errorf("exchange.Accounts: parse: %w", err)
 	}
-	return env.Data.Items, nil
+
+	out := make([]models.Account, 0, len(env.Data.Items))
+	for _, item := range env.Data.Items {
+		out = append(out, item.Account)
+	}
+	return out, nil
 }
 
 // Positions returns all open positions for the given account, fetching all
@@ -144,6 +149,52 @@ func (e *Exchange) Orders(ctx context.Context, accountID string) ([]models.Order
 	return all, nil
 }
 
+// RecentOrders returns recent broker-facing order state for the account.
+// It queries the search-orders endpoint and stops once limit results are collected.
+func (e *Exchange) RecentOrders(ctx context.Context, accountID string, limit int) ([]models.Order, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	var all []models.Order
+	page := 0
+	totalPages := 1
+
+	for page < totalPages && len(all) < limit {
+		url := fmt.Sprintf("%s/accounts/%s/orders?sort=Desc&per-page=%d&page-offset=%d", e.baseURL, accountID, limit, page)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return nil, fmt.Errorf("exchange.RecentOrders: build request page %d: %w", page, err)
+		}
+
+		resp, err := e.cl.Do(ctx, req, client.FamilyRead)
+		if err != nil {
+			return nil, fmt.Errorf("exchange.RecentOrders: page %d: %w", page, err)
+		}
+
+		data, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("exchange.RecentOrders: HTTP %d: %s", resp.StatusCode, data)
+		}
+
+		var env models.ItemsEnvelope[models.Order]
+		if err := json.Unmarshal(data, &env); err != nil {
+			return nil, fmt.Errorf("exchange.RecentOrders: parse page %d: %w", page, err)
+		}
+
+		all = append(all, env.Data.Items...)
+		if p := env.Data.Pagination; p != nil && p.TotalPages > 0 {
+			totalPages = p.TotalPages
+		}
+		page++
+	}
+	if len(all) > limit {
+		all = all[:limit]
+	}
+	return all, nil
+}
+
 // DryRun submits the order to /orders/dry-run without placing a live trade.
 // idempotencyKey is the pre-generated UUID recorded in the intent log by the
 // command layer — passing it here ensures the logged key and the
@@ -180,6 +231,71 @@ func (e *Exchange) DryRun(ctx context.Context, accountID string, order models.Ne
 	var env models.DataEnvelope[models.DryRunResult]
 	if err := json.Unmarshal(data, &env); err != nil {
 		return models.DryRunResult{}, fmt.Errorf("exchange.DryRun: parse: %w", err)
+	}
+	return env.Data, nil
+}
+
+// Submit routes a live order to /orders using the exact same payload shape as
+// dry-run. The command layer is responsible for calling CheckOrderSafety,
+// decision gating, and intent logging before invoking this method.
+func (e *Exchange) Submit(ctx context.Context, accountID string, order models.NewOrder, idempotencyKey string) (models.SubmitResult, error) {
+	body, err := json.Marshal(order)
+	if err != nil {
+		return models.SubmitResult{}, fmt.Errorf("exchange.Submit: marshal: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		fmt.Sprintf("%s/accounts/%s/orders", e.baseURL, accountID),
+		bytes.NewReader(body))
+	if err != nil {
+		return models.SubmitResult{}, fmt.Errorf("exchange.Submit: build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := e.cl.Do(ctx, req, client.FamilyOrders,
+		client.RequestOptions{IdempotencyKey: idempotencyKey})
+	if err != nil {
+		return models.SubmitResult{}, fmt.Errorf("exchange.Submit: %w", err)
+	}
+	defer resp.Body.Close()
+
+	data, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		return models.SubmitResult{}, fmt.Errorf("exchange.Submit: HTTP %d: %s", resp.StatusCode, data)
+	}
+
+	var env models.DataEnvelope[models.SubmitResult]
+	if err := json.Unmarshal(data, &env); err != nil {
+		return models.SubmitResult{}, fmt.Errorf("exchange.Submit: parse: %w", err)
+	}
+	return env.Data, nil
+}
+
+// QuoteToken fetches a fresh DXLink authentication token.
+// The /api-quote-tokens endpoint is unversioned — SkipVersion:true is mandatory.
+// A new token must be retrieved before every DXLink connect and reconnect.
+func (e *Exchange) QuoteToken(ctx context.Context) (models.QuoteToken, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		e.baseURL+"/api-quote-tokens", nil)
+	if err != nil {
+		return models.QuoteToken{}, fmt.Errorf("exchange.QuoteToken: build request: %w", err)
+	}
+
+	resp, err := e.cl.Do(ctx, req, client.FamilyMarketData,
+		client.RequestOptions{SkipVersion: true})
+	if err != nil {
+		return models.QuoteToken{}, fmt.Errorf("exchange.QuoteToken: %w", err)
+	}
+	defer resp.Body.Close()
+
+	data, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return models.QuoteToken{}, fmt.Errorf("exchange.QuoteToken: HTTP %d: %s", resp.StatusCode, data)
+	}
+
+	var env models.DataEnvelope[models.QuoteToken]
+	if err := json.Unmarshal(data, &env); err != nil {
+		return models.QuoteToken{}, fmt.Errorf("exchange.QuoteToken: parse: %w", err)
 	}
 	return env.Data, nil
 }

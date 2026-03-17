@@ -22,6 +22,7 @@ const (
 	ProdBaseURL    = "https://api.tastytrade.com"
 	SandboxBaseURL = "https://api.cert.tastyworks.com" // NOTE: tastyworks.com domain, not tastytrade.com
 
+	DefaultAccountID   = "5WW46136"
 	AccountStreamerURL = "wss://streamer.tastytrade.com"
 	DXLinkBaseURL      = "wss://tasty-openapi-ws.dxfeed.com/realtime" // may be overridden by /api-quote-tokens response
 )
@@ -55,11 +56,13 @@ func DefaultRateLimits() RateLimits {
 
 // Config is the full runtime configuration for the CLI.
 type Config struct {
-	BaseURL    string
-	AccountID  string
-	ClientID   string
-	UserAgent  string
-	APIVersion string // Accept-Version header value; empty = omit (use latest)
+	BaseURL            string
+	AccountID          string
+	ClientID           string
+	UserAgent          string
+	APIVersion         string // Accept-Version header value; empty = omit (use latest)
+	AccountStreamerURL string // WebSocket endpoint for the account streamer
+	DXLinkURL          string // DXLink market data WS endpoint (overridden by QuoteToken response)
 
 	RateLimits RateLimits
 
@@ -70,6 +73,17 @@ type Config struct {
 
 	// KillSwitch is evaluated at every order submission path — not just at startup.
 	// See internal/client.KillSwitch() for the runtime check.
+
+	// ReconcileInterval is the time between REST position reconciliation passes.
+	// Minimum enforced value: 60s. Default: 60s.
+	// Override: TASTYTRADE_RECONCILE_INTERVAL (e.g. "90s", "2m").
+	ReconcileInterval time.Duration
+
+	// ReconcileAbsenceThreshold is the number of consecutive REST passes where a
+	// symbol must be absent before it is removed from the MarkBook.
+	// Default: 2. Must be >= 1.
+	// Override: TASTYTRADE_RECONCILE_ABSENCE_THRESHOLD (integer string, e.g. "3").
+	ReconcileAbsenceThreshold int
 }
 
 // Load reads Config from environment variables.
@@ -77,7 +91,10 @@ type Config struct {
 func Load() (*Config, error) {
 	baseURL := os.Getenv("TASTYTRADE_BASE_URL")
 	if baseURL == "" {
-		baseURL = SandboxBaseURL
+		// Default to production. Sending a production refresh_token to the cert
+		// endpoint causes "invalid_grant / Grant revoked". If sandbox is needed,
+		// set TASTYTRADE_BASE_URL=https://api.cert.tastyworks.com explicitly.
+		baseURL = ProdBaseURL
 	}
 
 	clientID := os.Getenv("TASTYTRADE_CLIENT_ID")
@@ -117,14 +134,35 @@ func Load() (*Config, error) {
 		!strings.Contains(baseURL, "cert")
 	liveTrading := liveEnv && isProd
 
+	// Reconciler interval — minimum 60s, default 60s.
+	const minReconcileInterval = 60 * time.Second
+	reconcileInterval := minReconcileInterval
+	if raw := os.Getenv("TASTYTRADE_RECONCILE_INTERVAL"); raw != "" {
+		if d, err := time.ParseDuration(raw); err == nil && d >= minReconcileInterval {
+			reconcileInterval = d
+		}
+	}
+
+	// Absence threshold — minimum 1, default 2.
+	reconcileAbsenceThreshold := 2
+	if raw := os.Getenv("TASTYTRADE_RECONCILE_ABSENCE_THRESHOLD"); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n >= 1 {
+			reconcileAbsenceThreshold = n
+		}
+	}
+
 	return &Config{
-		BaseURL:     baseURL,
-		AccountID:   os.Getenv("TASTYTRADE_ACCOUNT_ID"),
-		ClientID:    clientID,
-		UserAgent:   userAgent,
-		APIVersion:  apiVersion,
-		RateLimits:  rl,
-		LiveTrading: liveTrading,
+		BaseURL:                   baseURL,
+		AccountID:                 envOr("TASTYTRADE_ACCOUNT_ID", DefaultAccountID),
+		ClientID:                  clientID,
+		UserAgent:                 userAgent,
+		APIVersion:                apiVersion,
+		AccountStreamerURL:        envOr("TASTYTRADE_ACCOUNT_STREAMER_URL", AccountStreamerURL),
+		DXLinkURL:                 envOr("TASTYTRADE_DXLINK_URL", DXLinkBaseURL),
+		RateLimits:                rl,
+		LiveTrading:               liveTrading,
+		ReconcileInterval:         reconcileInterval,
+		ReconcileAbsenceThreshold: reconcileAbsenceThreshold,
 	}, nil
 }
 

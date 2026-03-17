@@ -120,6 +120,19 @@ func NewUnauthenticated(cfg *config.Config, log *zap.Logger) *Client {
 	}
 }
 
+// AccessToken returns the current raw access token, calling EnsureToken first.
+// For use by the account streamer ONLY — the wire protocol requires the bare
+// token string, not the "Bearer <token>" form returned by authHeader().
+// REST callers must use Do() instead.
+func (c *Client) AccessToken(ctx context.Context) (string, error) {
+	if err := c.EnsureToken(ctx); err != nil {
+		return "", fmt.Errorf("AccessToken: %w", err)
+	}
+	c.token.mu.RLock()
+	defer c.token.mu.RUnlock()
+	return c.token.accessToken, nil
+}
+
 // CheckOrderSafety runs all pre-order safety checks in spec-mandated order:
 //  1. Kill switch (env + file)
 //  2. Circuit breaker

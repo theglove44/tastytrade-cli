@@ -46,9 +46,9 @@ type PositionSummary struct {
 }
 
 func runPositions(ctx context.Context) error {
-	accountID := cfg.AccountID
-	if accountID == "" {
-		return fmt.Errorf("positions: TASTYTRADE_ACCOUNT_ID is not set")
+	accountID, err := resolveAccountID(ctx, "positions")
+	if err != nil {
+		return err
 	}
 
 	items, err := ex.Positions(ctx, accountID)

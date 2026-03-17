@@ -7,6 +7,7 @@ bin/
 # Build
 dist/
 build/
+/tastytrade-cli
 
 # Env
 .env
@@ -21,3 +22,4 @@ build/
 # Editor
 .vscode/
 .idea/
+.DS_Store
