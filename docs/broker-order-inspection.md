@@ -82,6 +82,24 @@ The inspection commands surface the most relevant broker-facing fields currently
 - filled / cancelled timestamps when available
 - order legs
 
+## Human-readable detail rendering
+
+Phase 6B keeps the same single-order fetch path and JSON shape, but makes the default text rendering easier to scan.
+
+The detail view now groups high-signal fields into small sections such as:
+
+- order
+- pricing
+- timestamps
+- legs
+
+Behavior is intentionally conservative:
+
+- absent timestamps are omitted cleanly
+- absent instrument descriptors are omitted cleanly
+- legs are rendered in a compact numbered form
+- the command still does not expose broker status history or raw broker payloads
+
 ## Limits / caveats
 
 - `broker-orders detail` is a thin read-only single-order lookup by canonical broker order `id`; it is not a status-history explorer.

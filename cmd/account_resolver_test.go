@@ -27,6 +27,9 @@ func (s stubAccountResolverExchange) Orders(context.Context, string) ([]models.O
 func (s stubAccountResolverExchange) RecentOrders(context.Context, string, int) ([]models.Order, error) {
 	return nil, nil
 }
+func (s stubAccountResolverExchange) Order(context.Context, string, string) (models.Order, error) {
+	return models.Order{}, nil
+}
 func (s stubAccountResolverExchange) DryRun(context.Context, string, models.NewOrder, string) (models.DryRunResult, error) {
 	return models.DryRunResult{}, nil
 }

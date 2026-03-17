@@ -96,6 +96,9 @@ func (m *mockExchange) Orders(_ context.Context, _ string) ([]models.Order, erro
 func (m *mockExchange) RecentOrders(_ context.Context, _ string, _ int) ([]models.Order, error) {
 	return nil, nil
 }
+func (m *mockExchange) Order(_ context.Context, _ string, _ string) (models.Order, error) {
+	return models.Order{}, nil
+}
 func (m *mockExchange) DryRun(_ context.Context, _ string, _ models.NewOrder, _ string) (models.DryRunResult, error) {
 	return models.DryRunResult{}, nil
 }

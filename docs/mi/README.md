@@ -104,3 +104,7 @@ Examples:
   - read-only operator guidance layer mapping comparison outcomes to recommended next actions
 - `MI-2026-03-15-phase5b-manual-reconciliation-runbook-consolidation.md`
   - consolidates the manual reconciliation workflow into one primary runbook with light help/discoverability cleanup
+- `MI-2026-03-15-phase6a-broker-order-detail-inspection.md`
+  - adds a minimal read-only broker order detail lookup by canonical broker order ID
+- `MI-2026-03-15-phase6b-enriched-single-order-detail-rendering.md`
+  - modest operator-focused polish pass for the human-readable single-order detail rendering
