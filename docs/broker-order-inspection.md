@@ -92,11 +92,13 @@ The detail view now groups high-signal fields into small sections such as:
 - pricing
 - timestamps
 - legs
+- per-leg fill context when the current shaped order data already includes it
 
 Behavior is intentionally conservative:
 
 - absent timestamps are omitted cleanly
 - absent instrument descriptors are omitted cleanly
+- per-leg fill context is shown only when the current shaped order data already contains it
 - legs are rendered in a compact numbered form
 - the command still does not expose broker status history or raw broker payloads
 

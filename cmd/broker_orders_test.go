@@ -93,6 +93,19 @@ func sampleBrokerOrderWithoutOptionalFields(status string) models.Order {
 	}
 }
 
+func sampleBrokerOrderWithFillContext(status string) models.Order {
+	order := sampleBrokerOrder(status)
+	order.Legs = []models.OrderLeg{{
+		InstrumentType: "Equity",
+		Symbol:         "AAPL",
+		Quantity:       decimal.RequireFromString("1"),
+		Action:         "Buy to Open",
+		FillQuantity:   decimal.RequireFromString("1"),
+		FillPrice:      decimal.RequireFromString("1.21"),
+	}}
+	return order
+}
+
 func TestBuildBrokerOrderView_ShapesKeyFields(t *testing.T) {
 	view := buildBrokerOrderView(sampleBrokerOrder("Filled"))
 	if view.ID != "ord-1" || view.Status != "Filled" || view.Price != "1.23" {
@@ -154,7 +167,7 @@ func TestRunBrokerOrdersLive_HumanReadable(t *testing.T) {
 
 func TestRenderBrokerOrderDetail_HumanReadable(t *testing.T) {
 	stdout := captureStdout(t, func() {
-		if err := renderBrokerOrderDetail(BrokerOrderDetailOutput{AccountNumber: "TEST123", Order: buildBrokerOrderView(sampleBrokerOrder("Filled"))}); err != nil {
+		if err := renderBrokerOrderDetail("TEST123", sampleBrokerOrderWithFillContext("Filled")); err != nil {
 			t.Fatalf("renderBrokerOrderDetail: %v", err)
 		}
 	})
@@ -172,6 +185,9 @@ func TestRenderBrokerOrderDetail_HumanReadable(t *testing.T) {
 		"    1) AAPL",
 		"       action=Buy to Open quantity=1",
 		"       instrument_type=Equity",
+		"       fill_context:",
+		"         fill_quantity=1",
+		"         average_fill_price=1.21",
 	} {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("stdout = %q, missing %q", stdout, want)
@@ -181,7 +197,7 @@ func TestRenderBrokerOrderDetail_HumanReadable(t *testing.T) {
 
 func TestRenderBrokerOrderDetail_OmitsAbsentOptionalFields(t *testing.T) {
 	stdout := captureStdout(t, func() {
-		if err := renderBrokerOrderDetail(BrokerOrderDetailOutput{AccountNumber: "TEST123", Order: buildBrokerOrderView(sampleBrokerOrderWithoutOptionalFields("Cancelled"))}); err != nil {
+		if err := renderBrokerOrderDetail("TEST123", sampleBrokerOrderWithoutOptionalFields("Cancelled")); err != nil {
 			t.Fatalf("renderBrokerOrderDetail: %v", err)
 		}
 	})
@@ -190,7 +206,7 @@ func TestRenderBrokerOrderDetail_OmitsAbsentOptionalFields(t *testing.T) {
 			t.Fatalf("stdout = %q, missing %q", stdout, want)
 		}
 	}
-	for _, unwanted := range []string{"filled_at=", "cancelled_at=", "instrument_type=", "received_at= updated_at="} {
+	for _, unwanted := range []string{"filled_at=", "cancelled_at=", "instrument_type=", "fill_context:", "average_fill_price=", "received_at= updated_at="} {
 		if strings.Contains(stdout, unwanted) {
 			t.Fatalf("stdout = %q, unexpected %q", stdout, unwanted)
 		}
