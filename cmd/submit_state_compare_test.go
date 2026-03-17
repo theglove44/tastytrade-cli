@@ -66,6 +66,25 @@ func comparableOrder(t *testing.T, id, status string, order models.NewOrder) mod
 	return mapped
 }
 
+func TestRecommendedActionsForOutcome(t *testing.T) {
+	actions := recommendedActionsForOutcome(ComparisonLocalNoBrokerMatch)
+	if len(actions) == 0 {
+		t.Fatal("actions = empty, want operator guidance")
+	}
+	for _, want := range []string{"broker-orders live", "do not retry or clear local state automatically", "treat local state as uncertain"} {
+		found := false
+		for _, action := range actions {
+			if strings.Contains(action, want) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("actions = %+v, missing %q", actions, want)
+		}
+	}
+}
+
 func TestCompareLocalSubmitStateToBroker_PlausibleMatch(t *testing.T) {
 	order := models.NewOrder{
 		OrderType:   "Limit",
@@ -84,6 +103,9 @@ func TestCompareLocalSubmitStateToBroker_PlausibleMatch(t *testing.T) {
 	}
 	if results[0].Outcome != ComparisonPlausibleMatch || results[0].BrokerOrderID != "BROKER-1" {
 		t.Fatalf("result = %+v, want plausible match to BROKER-1", results[0])
+	}
+	if len(results[0].RecommendedActions) == 0 {
+		t.Fatalf("result = %+v, want recommended actions", results[0])
 	}
 }
 

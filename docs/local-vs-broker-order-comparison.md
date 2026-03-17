@@ -2,6 +2,8 @@
 
 Phases 4B/4C add a minimal read-only comparison workflow for manual troubleshooting, then extend it with concise summary counts and light filters.
 
+For the full consolidated operator workflow, see `manual-reconciliation-runbook.md`.
+
 The goal is simple: compare local persisted submit safety state from Phase 3C against broker-visible order state from Phase 4A, then surface concise advisory outcomes for operators.
 
 ## Scope
@@ -12,6 +14,7 @@ Included:
 - advisory/manual comparison outcomes
 - concise human-readable output
 - stable JSON output with `--json`
+- operator-facing recommended next actions per outcome
 
 Not included:
 
@@ -90,6 +93,34 @@ Important behavior:
 - summary counts reflect the currently returned result set after any `--outcome` filter is applied
 - `--account` is still a single-account advisory view, not a multi-account reconciliation report
 - filtering does not change broker or local state; it only narrows the advisory display
+
+## Operator guidance layer
+
+Phase 5A adds a small read-only guidance layer on top of the existing comparison outcomes.
+
+For each comparison result, the CLI now also renders concise recommended next actions.
+These actions are intentionally advisory/manual only.
+
+Current guidance intent by outcome:
+
+- `local_present_broker_match`
+  - inspect broker order details/status manually
+  - keep local safety state until manual verification is complete
+  - only clear local state later through the existing explicit workflow if still needed
+- `local_uncertain_no_broker_match`
+  - re-check broker visibility with `tt broker-orders live` and `tt broker-orders recent`
+  - treat local state as uncertain until manually verified
+  - do not retry or clear local state automatically
+- `broker_order_no_local_state`
+  - inspect broker order details/account activity manually
+  - confirm whether the broker-visible order is expected before taking local action
+  - do not infer automatic local-state creation/clearing from this result
+- `ambiguous`
+  - inspect both local submit-state records and broker order details manually
+  - narrow the advisory display with filters if helpful
+  - do not clear local state or assume broker truth from the ambiguous result
+
+In JSON mode, each result may include `recommended_actions`.
 
 ## What the comparison can conclude
 

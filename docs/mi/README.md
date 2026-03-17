@@ -6,10 +6,12 @@ This directory is the audit trail for investigation work, debugging passes, and 
 
 - `../live-submit-safety-runbook.md`
   - single primary runbook for the full Phase 3C live submit safety chain and operator workflow
+- `../manual-reconciliation-runbook.md`
+  - single primary runbook for the current manual reconciliation workflow built from the read-only Phase 4/5A surfaces
 - `../broker-order-inspection.md`
-  - primary read-only Phase 4A guide for broker-facing order inspection commands
+  - read-only Phase 4A guide for broker-facing order inspection commands
 - `../local-vs-broker-order-comparison.md`
-  - primary read-only Phase 4B/4C guide for advisory local vs broker order comparison, summaries, and filters
+  - read-only Phase 4B/4C/5A guide for advisory local vs broker order comparison, summaries, filters, and recommended next actions
 
 ## Naming convention
 
@@ -98,3 +100,7 @@ Examples:
   - extends advisory local-vs-broker comparison with deterministic summary counts and light filters
 - `MI-2026-03-15-phase4-branch-cleanup-and-handoff.md`
   - final tidy-up, merge-readiness review, and handoff guidance after completing Phase 4A/4B/4C
+- `MI-2026-03-15-phase5a-manual-reconciliation-guidance.md`
+  - read-only operator guidance layer mapping comparison outcomes to recommended next actions
+- `MI-2026-03-15-phase5b-manual-reconciliation-runbook-consolidation.md`
+  - consolidates the manual reconciliation workflow into one primary runbook with light help/discoverability cleanup
