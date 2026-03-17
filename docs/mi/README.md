@@ -8,6 +8,8 @@ This directory is the audit trail for investigation work, debugging passes, and 
   - single primary runbook for the full Phase 3C live submit safety chain and operator workflow
 - `../broker-order-inspection.md`
   - primary read-only Phase 4A guide for broker-facing order inspection commands
+- `../local-vs-broker-order-comparison.md`
+  - primary read-only Phase 4B guide for advisory local vs broker order comparison
 
 ## Naming convention
 
@@ -90,3 +92,5 @@ Examples:
   - consolidates the full Phase 3C live submit safety model into one primary runbook
 - `MI-2026-03-15-phase4a-broker-order-state-inspection.md`
   - initial read-only broker-facing order inspection slice for live/open and recent orders
+- `MI-2026-03-15-phase4b-local-vs-broker-order-comparison.md`
+  - initial read-only advisory comparison between local persisted submit state and broker-visible order state

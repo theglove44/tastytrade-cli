@@ -6,6 +6,8 @@
   - primary operator/developer runbook for the current Phase 3C live submit safety model
 - `broker-order-inspection.md`
   - primary read-only Phase 4A broker order inspection guide
+- `local-vs-broker-order-comparison.md`
+  - primary read-only Phase 4B guide for advisory local vs broker order comparison
 
 ## MI / implementation trail
 
