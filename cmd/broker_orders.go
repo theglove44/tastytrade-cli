@@ -128,7 +128,7 @@ func runBrokerOrdersDetail(ctx context.Context) error {
 	if flagJSON {
 		return printJSON(out)
 	}
-	return renderBrokerOrderDetail(out)
+	return renderBrokerOrderDetail(accountID, order)
 }
 
 func validateBrokerOrderID(orderID string) error {
@@ -142,7 +142,8 @@ func validateBrokerOrderID(orderID string) error {
 	return nil
 }
 
-func renderBrokerOrderDetail(out BrokerOrderDetailOutput) error {
+func renderBrokerOrderDetail(accountID string, order models.Order) error {
+	out := BrokerOrderDetailOutput{AccountNumber: accountID, Order: buildBrokerOrderView(order)}
 	fmt.Println("BROKER ORDER DETAIL")
 	fmt.Println("  order:")
 	fmt.Printf("    account=%s\n", out.AccountNumber)
@@ -175,18 +176,31 @@ func renderBrokerOrderDetail(out BrokerOrderDetailOutput) error {
 		}
 	}
 	fmt.Println("  legs:")
-	if len(out.Order.Legs) == 0 {
+	if len(order.Legs) == 0 {
 		fmt.Println("    (none)")
 		return nil
 	}
-	for i, leg := range out.Order.Legs {
+	for i, leg := range order.Legs {
 		fmt.Printf("    %d) %s\n", i+1, leg.Symbol)
-		fmt.Printf("       action=%s quantity=%s\n", leg.Action, leg.Quantity)
+		fmt.Printf("       action=%s quantity=%s\n", leg.Action, leg.Quantity.String())
 		if leg.InstrumentType != "" {
 			fmt.Printf("       instrument_type=%s\n", leg.InstrumentType)
 		}
+		if hasLegFillContext(leg) {
+			fmt.Println("       fill_context:")
+			if !leg.FillQuantity.IsZero() {
+				fmt.Printf("         fill_quantity=%s\n", leg.FillQuantity.String())
+			}
+			if !leg.FillPrice.IsZero() {
+				fmt.Printf("         average_fill_price=%s\n", leg.FillPrice.String())
+			}
+		}
 	}
 	return nil
+}
+
+func hasLegFillContext(leg models.OrderLeg) bool {
+	return !leg.FillQuantity.IsZero() || !leg.FillPrice.IsZero()
 }
 
 func renderBrokerOrders(accountID, source string, items []models.Order) error {

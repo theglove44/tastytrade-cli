@@ -108,3 +108,5 @@ Examples:
   - adds a minimal read-only broker order detail lookup by canonical broker order ID
 - `MI-2026-03-15-phase6b-enriched-single-order-detail-rendering.md`
   - modest operator-focused polish pass for the human-readable single-order detail rendering
+- `MI-2026-03-15-phase6c-bounded-broker-order-context-expansion.md`
+  - bounded single-order detail context expansion using existing per-leg fill data already present in the current order model
