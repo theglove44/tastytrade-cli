@@ -10,6 +10,7 @@ This phase is strictly read-only.
 
 Included:
 
+- one broker order detail inspection by canonical broker order ID
 - recent broker order inspection
 - live/open broker order inspection
 - concise operator-friendly output
@@ -23,6 +24,21 @@ Not included:
 - Phase 3C safety behavior changes
 
 ## Commands
+
+### One broker order in detail
+
+```bash
+tt broker-orders detail --id <broker-order-id>
+```
+
+JSON:
+
+```bash
+tt broker-orders detail --id <broker-order-id> --json
+```
+
+This uses the canonical broker order `id` already surfaced in broker order listings and documented by the tastytrade order-management APIs.
+It is not intended to accept local submit identities or other local-only identifiers.
 
 ### Live/open broker orders
 
@@ -57,6 +73,7 @@ This uses the broker/API search-orders path in descending order and returns the 
 The inspection commands surface the most relevant broker-facing fields currently shaped in the CLI:
 
 - order ID
+- account number
 - status
 - order type
 - time in force
@@ -67,6 +84,7 @@ The inspection commands surface the most relevant broker-facing fields currently
 
 ## Limits / caveats
 
+- `broker-orders detail` is a thin read-only single-order lookup by canonical broker order `id`; it is not a status-history explorer.
 - `broker-orders live` reflects the tastytrade "live orders" endpoint semantics, which may include orders created or updated today and is not strictly limited to only currently working orders.
 - `broker-orders recent` is a thin read-only broker inspection slice, not a reconciliation workflow.
 - The CLI does not yet compare broker order state with local submit safety state automatically.

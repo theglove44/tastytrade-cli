@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -10,7 +11,12 @@ import (
 	"github.com/theglove44/tastytrade-cli/internal/models"
 )
 
-var flagBrokerOrdersLimit int
+var (
+	flagBrokerOrdersLimit int
+	flagBrokerOrderID     string
+
+	likelyLocalSubmitIdentityPattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
+)
 
 var brokerOrdersCmd = &cobra.Command{
 	Use:   "broker-orders",
@@ -37,9 +43,19 @@ var brokerOrdersRecentCmd = &cobra.Command{
 	},
 }
 
+var brokerOrdersDetailCmd = &cobra.Command{
+	Use:   "detail",
+	Short: "Inspect one broker order in detail by broker order ID",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runBrokerOrdersDetail(cmd.Context())
+	},
+}
+
 func init() {
 	brokerOrdersRecentCmd.Flags().IntVar(&flagBrokerOrdersLimit, "limit", 10, "Maximum recent broker orders to return")
-	brokerOrdersCmd.AddCommand(brokerOrdersLiveCmd, brokerOrdersRecentCmd)
+	brokerOrdersDetailCmd.Flags().StringVar(&flagBrokerOrderID, "id", "", "Canonical broker order ID to inspect")
+	_ = brokerOrdersDetailCmd.MarkFlagRequired("id")
+	brokerOrdersCmd.AddCommand(brokerOrdersLiveCmd, brokerOrdersRecentCmd, brokerOrdersDetailCmd)
 }
 
 type BrokerOrdersOutput struct {
@@ -61,6 +77,11 @@ type BrokerOrderView struct {
 	FilledAt    string       `json:"filled_at,omitempty"`
 	CancelledAt string       `json:"cancelled_at,omitempty"`
 	Legs        []LegSummary `json:"legs"`
+}
+
+type BrokerOrderDetailOutput struct {
+	AccountNumber string          `json:"account_number"`
+	Order         BrokerOrderView `json:"order"`
 }
 
 func runBrokerOrdersLive(ctx context.Context) error {
@@ -89,6 +110,46 @@ func runBrokerOrdersRecent(ctx context.Context) error {
 		return fmt.Errorf("broker-orders recent: %w", err)
 	}
 	return renderBrokerOrders(accountID, fmt.Sprintf("recent(limit=%d)", limit), items)
+}
+
+func runBrokerOrdersDetail(ctx context.Context) error {
+	accountID, err := resolveAccountID(ctx, "broker-orders detail")
+	if err != nil {
+		return err
+	}
+	if err := validateBrokerOrderID(flagBrokerOrderID); err != nil {
+		return fmt.Errorf("broker-orders detail: %w", err)
+	}
+	order, err := ex.Order(ctx, accountID, flagBrokerOrderID)
+	if err != nil {
+		return fmt.Errorf("broker-orders detail: %w", err)
+	}
+	out := BrokerOrderDetailOutput{AccountNumber: accountID, Order: buildBrokerOrderView(order)}
+	if flagJSON {
+		return printJSON(out)
+	}
+	fmt.Println("BROKER ORDER DETAIL")
+	fmt.Printf("  account=%s\n", out.AccountNumber)
+	fmt.Printf("  id=%s status=%s type=%s tif=%s\n", out.Order.ID, out.Order.Status, out.Order.OrderType, out.Order.TimeInForce)
+	fmt.Printf("  price=%s price_effect=%s\n", out.Order.Price, out.Order.PriceEffect)
+	if out.Order.ReceivedAt != "" || out.Order.UpdatedAt != "" || out.Order.FilledAt != "" || out.Order.CancelledAt != "" {
+		fmt.Printf("  received_at=%s updated_at=%s filled_at=%s cancelled_at=%s\n", out.Order.ReceivedAt, out.Order.UpdatedAt, out.Order.FilledAt, out.Order.CancelledAt)
+	}
+	for _, leg := range out.Order.Legs {
+		fmt.Printf("  leg: action=%s symbol=%s instrument_type=%s quantity=%s\n", leg.Action, leg.Symbol, leg.InstrumentType, leg.Quantity)
+	}
+	return nil
+}
+
+func validateBrokerOrderID(orderID string) error {
+	trimmed := strings.TrimSpace(orderID)
+	if trimmed == "" {
+		return fmt.Errorf("canonical broker order id is required")
+	}
+	if likelyLocalSubmitIdentityPattern.MatchString(strings.ToLower(trimmed)) {
+		return fmt.Errorf("canonical broker order id required; got a value that looks like a local submit identity")
+	}
+	return nil
 }
 
 func renderBrokerOrders(accountID, source string, items []models.Order) error {

@@ -195,6 +195,44 @@ func (e *Exchange) RecentOrders(ctx context.Context, accountID string, limit int
 	return all, nil
 }
 
+// Order returns one broker order by canonical broker order ID.
+func (e *Exchange) Order(ctx context.Context, accountID, orderID string) (models.Order, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		fmt.Sprintf("%s/accounts/%s/orders/%s", e.baseURL, accountID, orderID), nil)
+	if err != nil {
+		return models.Order{}, fmt.Errorf("exchange.Order: build request: %w", err)
+	}
+
+	resp, err := e.cl.Do(ctx, req, client.FamilyRead)
+	if err != nil {
+		return models.Order{}, fmt.Errorf("exchange.Order: %w", err)
+	}
+	defer resp.Body.Close()
+
+	data, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode == http.StatusNotFound {
+		return models.Order{}, fmt.Errorf("exchange.Order: broker order %s not found in account %s; confirm the canonical broker order id and selected account", orderID, accountID)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return models.Order{}, fmt.Errorf("exchange.Order: HTTP %d: %s", resp.StatusCode, data)
+	}
+
+	var env models.DataEnvelope[models.Order]
+	if err := json.Unmarshal(data, &env); err != nil {
+		return models.Order{}, fmt.Errorf("exchange.Order: parse: %w", err)
+	}
+	if env.Data.ID == "" {
+		return models.Order{}, fmt.Errorf("exchange.Order: empty broker order id in response for account %s", accountID)
+	}
+	if env.Data.ID != orderID {
+		return models.Order{}, fmt.Errorf("exchange.Order: broker order id mismatch: requested %s got %s", orderID, env.Data.ID)
+	}
+	if env.Data.AccountNumber != "" && env.Data.AccountNumber != accountID {
+		return models.Order{}, fmt.Errorf("exchange.Order: broker order %s belongs to account %s, not requested account %s", orderID, env.Data.AccountNumber, accountID)
+	}
+	return env.Data, nil
+}
+
 // DryRun submits the order to /orders/dry-run without placing a live trade.
 // idempotencyKey is the pre-generated UUID recorded in the intent log by the
 // command layer — passing it here ensures the logged key and the

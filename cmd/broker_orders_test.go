@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -12,9 +13,11 @@ import (
 )
 
 type brokerOrdersTestExchange struct {
-	liveOrders   []models.Order
-	recentOrders []models.Order
-	recentLimit  int
+	liveOrders     []models.Order
+	recentOrders   []models.Order
+	recentLimit    int
+	orderErr       error
+	orderAccountID string
 }
 
 func (b *brokerOrdersTestExchange) Accounts(context.Context) ([]models.Account, error) {
@@ -29,6 +32,18 @@ func (b *brokerOrdersTestExchange) Orders(context.Context, string) ([]models.Ord
 func (b *brokerOrdersTestExchange) RecentOrders(_ context.Context, _ string, limit int) ([]models.Order, error) {
 	b.recentLimit = limit
 	return b.recentOrders, nil
+}
+func (b *brokerOrdersTestExchange) Order(_ context.Context, accountID, orderID string) (models.Order, error) {
+	b.orderAccountID = accountID
+	if b.orderErr != nil {
+		return models.Order{}, b.orderErr
+	}
+	for _, order := range append(append([]models.Order{}, b.liveOrders...), b.recentOrders...) {
+		if order.ID == orderID {
+			return order, nil
+		}
+	}
+	return models.Order{}, fmt.Errorf("broker order %s not found in account %s; confirm the canonical broker order id and selected account", orderID, accountID)
 }
 func (b *brokerOrdersTestExchange) DryRun(context.Context, string, models.NewOrder, string) (models.DryRunResult, error) {
 	return models.DryRunResult{}, nil
@@ -118,6 +133,94 @@ func TestRunBrokerOrdersLive_HumanReadable(t *testing.T) {
 	for _, want := range []string{"BROKER ORDERS (live)", "Live", "AAPL"} {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("stdout = %q, missing %q", stdout, want)
+		}
+	}
+}
+
+func TestRunBrokerOrdersDetail_JSON(t *testing.T) {
+	oldCfg, oldEx, oldFlagJSON, oldID := cfg, ex, flagJSON, flagBrokerOrderID
+	defer func() { cfg, ex, flagJSON, flagBrokerOrderID = oldCfg, oldEx, oldFlagJSON, oldID }()
+
+	stub := &brokerOrdersTestExchange{liveOrders: []models.Order{sampleBrokerOrder("Filled")}}
+	cfg = &config.Config{AccountID: "TEST123"}
+	ex = stub
+	flagJSON = true
+	flagBrokerOrderID = "ord-1"
+
+	stdout := captureStdout(t, func() {
+		if err := runBrokerOrdersDetail(context.Background()); err != nil {
+			t.Fatalf("runBrokerOrdersDetail: %v", err)
+		}
+	})
+	if stub.orderAccountID != "TEST123" {
+		t.Fatalf("orderAccountID = %q, want TEST123", stub.orderAccountID)
+	}
+	for _, want := range []string{"\"account_number\": \"TEST123\"", "\"id\": \"ord-1\"", "\"status\": \"Filled\"", "\"order\":"} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("stdout = %q, missing %q", stdout, want)
+		}
+	}
+	if strings.Contains(stdout, "\"source\":") || strings.Contains(stdout, "\"orders\":") {
+		t.Fatalf("stdout = %q, contains list-only broker-orders fields", stdout)
+	}
+}
+
+func TestRunBrokerOrdersDetail_NotFound(t *testing.T) {
+	oldCfg, oldEx, oldFlagJSON, oldID := cfg, ex, flagJSON, flagBrokerOrderID
+	defer func() { cfg, ex, flagJSON, flagBrokerOrderID = oldCfg, oldEx, oldFlagJSON, oldID }()
+
+	cfg = &config.Config{AccountID: "TEST123"}
+	ex = &brokerOrdersTestExchange{}
+	flagJSON = false
+	flagBrokerOrderID = "missing-1"
+
+	err := runBrokerOrdersDetail(context.Background())
+	if err == nil {
+		t.Fatal("runBrokerOrdersDetail error = nil, want not found error")
+	}
+	for _, want := range []string{"broker-orders detail:", "missing-1", "TEST123", "canonical broker order id", "selected account"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error = %q, missing %q", err.Error(), want)
+		}
+	}
+}
+
+func TestRunBrokerOrdersDetail_RejectsLikelyLocalSubmitIdentity(t *testing.T) {
+	oldCfg, oldEx, oldFlagJSON, oldID := cfg, ex, flagJSON, flagBrokerOrderID
+	defer func() { cfg, ex, flagJSON, flagBrokerOrderID = oldCfg, oldEx, oldFlagJSON, oldID }()
+
+	cfg = &config.Config{AccountID: "TEST123"}
+	ex = &brokerOrdersTestExchange{}
+	flagJSON = false
+	flagBrokerOrderID = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+	err := runBrokerOrdersDetail(context.Background())
+	if err == nil {
+		t.Fatal("runBrokerOrdersDetail error = nil, want local-id rejection")
+	}
+	for _, want := range []string{"broker-orders detail:", "canonical broker order id required", "local submit identity"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error = %q, missing %q", err.Error(), want)
+		}
+	}
+}
+
+func TestRunBrokerOrdersDetail_AccountMismatchError(t *testing.T) {
+	oldCfg, oldEx, oldFlagJSON, oldID := cfg, ex, flagJSON, flagBrokerOrderID
+	defer func() { cfg, ex, flagJSON, flagBrokerOrderID = oldCfg, oldEx, oldFlagJSON, oldID }()
+
+	cfg = &config.Config{AccountID: "TEST123"}
+	ex = &brokerOrdersTestExchange{orderErr: fmt.Errorf("broker order ord-1 belongs to account OTHER123, not requested account TEST123")}
+	flagJSON = false
+	flagBrokerOrderID = "ord-1"
+
+	err := runBrokerOrdersDetail(context.Background())
+	if err == nil {
+		t.Fatal("runBrokerOrdersDetail error = nil, want account mismatch error")
+	}
+	for _, want := range []string{"broker-orders detail:", "belongs to account OTHER123", "requested account TEST123"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error = %q, missing %q", err.Error(), want)
 		}
 	}
 }
