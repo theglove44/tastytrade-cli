@@ -119,6 +119,8 @@ type Order struct {
 	Legs          []OrderLeg      `json:"legs"`
 	CancelledAt   *time.Time      `json:"cancelled-at,omitempty"`
 	FilledAt      *time.Time      `json:"filled-at,omitempty"`
+	BrokerReason  string          `json:"reason,omitempty"` // broker-provided terminal context text, if any
+	TerminalAt    *time.Time      `json:"terminal-at,omitempty"`
 	ReceivedAt    time.Time       `json:"received-at"`
 	UpdatedAt     time.Time       `json:"updated-at"`
 }
