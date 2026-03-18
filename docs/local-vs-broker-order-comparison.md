@@ -120,6 +120,13 @@ Current guidance intent by outcome:
   - narrow the advisory display with filters if helpful
   - do not clear local state or assume broker truth from the ambiguous result
 
+When a comparison result already includes a canonical `broker_order_id`, the human-readable output now also prints the exact next-step detail command:
+
+- `tt broker-orders detail --id <broker-order-id>`
+
+This is only an operator handoff hint for the existing read-only broker detail command.
+It does not change comparison logic or add any broker-side action.
+
 In JSON mode, each result may include `recommended_actions`.
 
 ## What the comparison can conclude

@@ -112,3 +112,5 @@ Examples:
   - bounded single-order detail context expansion using existing per-leg fill data already present in the current order model
 - `MI-2026-03-18-phase6d-terminal-state-broker-order-reason-visibility.md`
   - terminal-state broker context visibility added to broker order detail rendering using optional shaped terminal fields
+- `MI-2026-03-18-phase7a-compare-to-detail-operator-handoff.md`
+  - adds a minimal advisory handoff from submit-state compare results to the existing broker-order detail command

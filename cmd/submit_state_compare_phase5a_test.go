@@ -36,4 +36,7 @@ func TestRunSubmitStateCompare_HumanReadableShowsNextActions(t *testing.T) {
 			t.Fatalf("stdout = %q, missing %q", stdout, want)
 		}
 	}
+	if strings.Contains(stdout, "next_step=tt broker-orders detail --id") {
+		t.Fatalf("stdout = %q, unexpected broker detail hint without broker order id", stdout)
+	}
 }

@@ -135,6 +135,7 @@ Interpretation:
 Recommended use:
 
 - inspect the broker order details and current status manually
+- if `submit-state compare` already surfaces `broker_order_id`, use `tt broker-orders detail --id <broker-order-id>`
 - keep local safety state until manual verification is complete
 - only consider explicit local-state clearing later if still needed
 
@@ -159,6 +160,7 @@ Interpretation:
 Recommended use:
 
 - inspect broker order details and account activity manually
+- if `submit-state compare` already surfaces `broker_order_id`, use `tt broker-orders detail --id <broker-order-id>`
 - confirm whether the order is expected before taking local action
 - do not infer that local state should be created or cleared automatically
 
@@ -171,6 +173,7 @@ Interpretation:
 Recommended use:
 
 - inspect both local submit-state records and broker order details manually
+- if `submit-state compare` already surfaces `broker_order_id`, use `tt broker-orders detail --id <broker-order-id>`
 - narrow the display with `--account`, `--outcome`, and `--limit` if helpful
 - do not clear local state or assume broker truth from an ambiguous result alone
 

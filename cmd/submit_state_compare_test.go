@@ -236,4 +236,54 @@ func TestRunSubmitStateCompare_JSON(t *testing.T) {
 			t.Fatalf("stdout = %q, missing %q", stdout, want)
 		}
 	}
+	if strings.Contains(stdout, "\"next_step\":") || strings.Contains(stdout, "tt broker-orders detail --id BROKER-1") {
+		t.Fatalf("stdout = %q, unexpected human-readable detail hint in JSON output", stdout)
+	}
+}
+
+func TestRunSubmitStateCompare_HumanReadableShowsBrokerDetailHint(t *testing.T) {
+	r := setupSubmitStateTest(t)
+	oldCfg, oldEx, oldFlagJSON, oldLimit, oldAccount, oldOutcome := cfg, ex, flagJSON, flagSubmitStateCompareLimit, flagSubmitStateCompareAccount, flagSubmitStateCompareOutcome
+	defer func() {
+		cfg, ex, flagJSON, flagSubmitStateCompareLimit, flagSubmitStateCompareAccount, flagSubmitStateCompareOutcome = oldCfg, oldEx, oldFlagJSON, oldLimit, oldAccount, oldOutcome
+	}()
+
+	order := models.NewOrder{
+		OrderType:   "Limit",
+		TimeInForce: "Day",
+		Price:       "1.2",
+		PriceEffect: "Credit",
+		Legs:        []models.NewOrderLeg{{InstrumentType: "Equity Option", Symbol: "SPY 250320C00580000", Quantity: 1, Action: "Sell to Open"}},
+	}
+	hash, err := canonicalOrderHash(order)
+	if err != nil {
+		t.Fatalf("canonicalOrderHash: %v", err)
+	}
+	identity, err := deriveSubmitIdentity("ACCT-1", "intent-1", hash)
+	if err != nil {
+		t.Fatalf("deriveSubmitIdentity: %v", err)
+	}
+	if result := r.reserve(identity); !result.Allowed {
+		t.Fatalf("reserve = %+v, want allowed", result)
+	}
+
+	cfg = &config.Config{AccountID: "ACCT-1"}
+	ex = &submitStateCompareTestExchange{liveOrders: []models.Order{comparableOrder(t, "BROKER-1", "Live", order)}}
+	flagJSON = false
+	flagSubmitStateCompareLimit = 7
+
+	stdout := captureStdout(t, func() {
+		if err := runSubmitStateCompare(context.Background()); err != nil {
+			t.Fatalf("runSubmitStateCompare: %v", err)
+		}
+	})
+	for _, want := range []string{
+		"outcome=local_present_broker_match",
+		"broker_order_id=BROKER-1",
+		"next_step=tt broker-orders detail --id BROKER-1",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("stdout = %q, missing %q", stdout, want)
+		}
+	}
 }
