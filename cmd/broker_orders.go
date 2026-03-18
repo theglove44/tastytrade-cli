@@ -66,17 +66,19 @@ type BrokerOrdersOutput struct {
 }
 
 type BrokerOrderView struct {
-	ID          string       `json:"id"`
-	Status      string       `json:"status"`
-	OrderType   string       `json:"order_type"`
-	TimeInForce string       `json:"time_in_force"`
-	Price       string       `json:"price"`
-	PriceEffect string       `json:"price_effect"`
-	ReceivedAt  string       `json:"received_at,omitempty"`
-	UpdatedAt   string       `json:"updated_at,omitempty"`
-	FilledAt    string       `json:"filled_at,omitempty"`
-	CancelledAt string       `json:"cancelled_at,omitempty"`
-	Legs        []LegSummary `json:"legs"`
+	ID           string       `json:"id"`
+	Status       string       `json:"status"`
+	OrderType    string       `json:"order_type"`
+	TimeInForce  string       `json:"time_in_force"`
+	Price        string       `json:"price"`
+	PriceEffect  string       `json:"price_effect"`
+	ReceivedAt   string       `json:"received_at,omitempty"`
+	UpdatedAt    string       `json:"updated_at,omitempty"`
+	FilledAt     string       `json:"filled_at,omitempty"`
+	CancelledAt  string       `json:"cancelled_at,omitempty"`
+	TerminalAt   string       `json:"terminal_at,omitempty"`
+	BrokerReason string       `json:"reason,omitempty"`
+	Legs         []LegSummary `json:"legs"`
 }
 
 type BrokerOrderDetailOutput struct {
@@ -175,6 +177,15 @@ func renderBrokerOrderDetail(accountID string, order models.Order) error {
 			fmt.Printf("    cancelled_at=%s\n", out.Order.CancelledAt)
 		}
 	}
+	if out.Order.TerminalAt != "" || out.Order.BrokerReason != "" {
+		fmt.Println("  terminal:")
+		if out.Order.TerminalAt != "" {
+			fmt.Printf("    terminal_at=%s\n", out.Order.TerminalAt)
+		}
+		if out.Order.BrokerReason != "" {
+			fmt.Printf("    reason=%s\n", out.Order.BrokerReason)
+		}
+	}
 	fmt.Println("  legs:")
 	if len(order.Legs) == 0 {
 		fmt.Println("    (none)")
@@ -258,6 +269,10 @@ func buildBrokerOrderView(order models.Order) BrokerOrderView {
 	if order.CancelledAt != nil {
 		view.CancelledAt = order.CancelledAt.UTC().Format(time.RFC3339)
 	}
+	if order.TerminalAt != nil {
+		view.TerminalAt = order.TerminalAt.UTC().Format(time.RFC3339)
+	}
+	view.BrokerReason = order.BrokerReason
 	for _, leg := range order.Legs {
 		view.Legs = append(view.Legs, LegSummary{
 			Symbol:         leg.Symbol,

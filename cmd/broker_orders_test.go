@@ -106,6 +106,14 @@ func sampleBrokerOrderWithFillContext(status string) models.Order {
 	return order
 }
 
+func sampleBrokerOrderWithTerminalReason(status string) models.Order {
+	order := sampleBrokerOrder(status)
+	terminal := order.UpdatedAt
+	order.TerminalAt = &terminal
+	order.BrokerReason = "buying-power-check-failed"
+	return order
+}
+
 func TestBuildBrokerOrderView_ShapesKeyFields(t *testing.T) {
 	view := buildBrokerOrderView(sampleBrokerOrder("Filled"))
 	if view.ID != "ord-1" || view.Status != "Filled" || view.Price != "1.23" {
@@ -195,6 +203,23 @@ func TestRenderBrokerOrderDetail_HumanReadable(t *testing.T) {
 	}
 }
 
+func TestRenderBrokerOrderDetail_ShowsTerminalReason(t *testing.T) {
+	stdout := captureStdout(t, func() {
+		if err := renderBrokerOrderDetail("TEST123", sampleBrokerOrderWithTerminalReason("Rejected")); err != nil {
+			t.Fatalf("renderBrokerOrderDetail: %v", err)
+		}
+	})
+	for _, want := range []string{
+		"  terminal:",
+		"    terminal_at=2026-03-15T13:00:00Z",
+		"    reason=buying-power-check-failed",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("stdout = %q, missing %q", stdout, want)
+		}
+	}
+}
+
 func TestRenderBrokerOrderDetail_OmitsAbsentOptionalFields(t *testing.T) {
 	stdout := captureStdout(t, func() {
 		if err := renderBrokerOrderDetail("TEST123", sampleBrokerOrderWithoutOptionalFields("Cancelled")); err != nil {
@@ -238,6 +263,28 @@ func TestRunBrokerOrdersDetail_JSON(t *testing.T) {
 	}
 	if strings.Contains(stdout, "\"source\":") || strings.Contains(stdout, "\"orders\":") {
 		t.Fatalf("stdout = %q, contains list-only broker-orders fields", stdout)
+	}
+}
+
+func TestRunBrokerOrdersDetail_JSONIncludesTerminalReason(t *testing.T) {
+	oldCfg, oldEx, oldFlagJSON, oldID := cfg, ex, flagJSON, flagBrokerOrderID
+	defer func() { cfg, ex, flagJSON, flagBrokerOrderID = oldCfg, oldEx, oldFlagJSON, oldID }()
+
+	stub := &brokerOrdersTestExchange{liveOrders: []models.Order{sampleBrokerOrderWithTerminalReason("Rejected")}}
+	cfg = &config.Config{AccountID: "TEST123"}
+	ex = stub
+	flagJSON = true
+	flagBrokerOrderID = "ord-1"
+
+	stdout := captureStdout(t, func() {
+		if err := runBrokerOrdersDetail(context.Background()); err != nil {
+			t.Fatalf("runBrokerOrdersDetail: %v", err)
+		}
+	})
+	for _, want := range []string{"\"terminal_at\": \"2026-03-15T13:00:00Z\"", "\"reason\": \"buying-power-check-failed\""} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("stdout = %q, missing %q", stdout, want)
+		}
 	}
 }
 

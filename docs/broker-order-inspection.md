@@ -80,6 +80,7 @@ The inspection commands surface the most relevant broker-facing fields currently
 - price / price effect
 - received / updated timestamps when available
 - filled / cancelled timestamps when available
+- terminal timestamp / reason when available
 - order legs
 
 ## Human-readable detail rendering
@@ -94,12 +95,19 @@ The detail view now groups high-signal fields into small sections such as:
 - legs
 - per-leg fill context when the current shaped order data already includes it
 
+Phase 6D extends that same detail surface with terminal-state broker context visibility when the shaped broker order includes it:
+
+- terminal timestamp when present
+- broker-provided reason text when present
+- no change to the list commands or single-order lookup path
+
 Behavior is intentionally conservative:
 
 - absent timestamps are omitted cleanly
 - absent instrument descriptors are omitted cleanly
 - per-leg fill context is shown only when the current shaped order data already contains it
 - legs are rendered in a compact numbered form
+- terminal-state broker context fields are shown only when present on the shaped broker order
 - the command still does not expose broker status history or raw broker payloads
 
 ## Limits / caveats
