@@ -164,6 +164,9 @@ func runSubmitStateCompare(ctx context.Context) error {
 		for _, action := range result.RecommendedActions {
 			fmt.Printf("  next_action=%s\n", action)
 		}
+		if hint := brokerOrderDetailHint(result.BrokerOrderID); hint != "" {
+			fmt.Printf("  next_step=%s\n", hint)
+		}
 	}
 	fmt.Println("  comparison is advisory/manual only; no reconciliation or broker confirmation is performed")
 	return nil
@@ -284,6 +287,13 @@ func recommendedActionsForOutcome(outcome string) []string {
 func withRecommendedActions(entry SubmitStateCompareEntry) SubmitStateCompareEntry {
 	entry.RecommendedActions = recommendedActionsForOutcome(entry.Outcome)
 	return entry
+}
+
+func brokerOrderDetailHint(orderID string) string {
+	if strings.TrimSpace(orderID) == "" {
+		return ""
+	}
+	return fmt.Sprintf("tt broker-orders detail --id %s", orderID)
 }
 
 func resolveSubmitStateCompareAccountID(ctx context.Context) (string, error) {
