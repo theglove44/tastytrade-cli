@@ -164,7 +164,7 @@ func runSubmitStateCompare(ctx context.Context) error {
 		for _, action := range result.RecommendedActions {
 			fmt.Printf("  next_action=%s\n", action)
 		}
-		if hint := brokerOrderDetailHint(result.BrokerOrderID); hint != "" {
+		for _, hint := range comparisonNextStepHints(result, limit) {
 			fmt.Printf("  next_step=%s\n", hint)
 		}
 	}
@@ -294,6 +294,26 @@ func brokerOrderDetailHint(orderID string) string {
 		return ""
 	}
 	return fmt.Sprintf("tt broker-orders detail --id %s", orderID)
+}
+
+func brokerOrderReinspectionHints(outcome string, limit int) []string {
+	if outcome != ComparisonLocalNoBrokerMatch {
+		return nil
+	}
+	if limit <= 0 {
+		limit = 25
+	}
+	return []string{
+		"tt broker-orders live",
+		fmt.Sprintf("tt broker-orders recent --limit %d", limit),
+	}
+}
+
+func comparisonNextStepHints(result SubmitStateCompareEntry, limit int) []string {
+	if hint := brokerOrderDetailHint(result.BrokerOrderID); hint != "" {
+		return []string{hint}
+	}
+	return brokerOrderReinspectionHints(result.Outcome, limit)
 }
 
 func resolveSubmitStateCompareAccountID(ctx context.Context) (string, error) {

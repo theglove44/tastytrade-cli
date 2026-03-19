@@ -31,12 +31,42 @@ func TestRunSubmitStateCompare_HumanReadableShowsNextActions(t *testing.T) {
 			t.Fatalf("runSubmitStateCompare: %v", err)
 		}
 	})
-	for _, want := range []string{"outcome=local_uncertain_no_broker_match", "next_action=re-check broker visibility using broker-orders live and broker-orders recent", "next_action=do not retry or clear local state automatically"} {
+	for _, want := range []string{"outcome=local_uncertain_no_broker_match", "next_action=re-check broker visibility using broker-orders live and broker-orders recent", "next_action=do not retry or clear local state automatically", "next_step=tt broker-orders live", "next_step=tt broker-orders recent --limit 5"} {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("stdout = %q, missing %q", stdout, want)
 		}
 	}
 	if strings.Contains(stdout, "next_step=tt broker-orders detail --id") {
 		t.Fatalf("stdout = %q, unexpected broker detail hint without broker order id", stdout)
+	}
+}
+
+func TestRunSubmitStateCompare_JSONOmitsReinspectionHints(t *testing.T) {
+	r := setupSubmitStateTest(t)
+	oldCfg, oldEx, oldFlagJSON, oldLimit := cfg, ex, flagJSON, flagSubmitStateCompareLimit
+	defer func() { cfg, ex, flagJSON, flagSubmitStateCompareLimit = oldCfg, oldEx, oldFlagJSON, oldLimit }()
+
+	identity, err := deriveSubmitIdentity("ACCT-1", "intent-1", "hash-1")
+	if err != nil {
+		t.Fatalf("deriveSubmitIdentity: %v", err)
+	}
+	if result := r.reserve(identity); !result.Allowed {
+		t.Fatalf("reserve = %+v, want allowed", result)
+	}
+
+	cfg = &config.Config{AccountID: "ACCT-1"}
+	ex = &submitStateCompareTestExchange{}
+	flagJSON = true
+	flagSubmitStateCompareLimit = 5
+
+	stdout := captureStdout(t, func() {
+		if err := runSubmitStateCompare(context.Background()); err != nil {
+			t.Fatalf("runSubmitStateCompare: %v", err)
+		}
+	})
+	for _, unwanted := range []string{"\"next_step\":", "tt broker-orders live", "tt broker-orders recent --limit 5"} {
+		if strings.Contains(stdout, unwanted) {
+			t.Fatalf("stdout = %q, unexpected %q in JSON output", stdout, unwanted)
+		}
 	}
 }

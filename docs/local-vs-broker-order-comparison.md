@@ -127,6 +127,14 @@ When a comparison result already includes a canonical `broker_order_id`, the hum
 This is only an operator handoff hint for the existing read-only broker detail command.
 It does not change comparison logic or add any broker-side action.
 
+For `local_uncertain_no_broker_match`, the human-readable output also prints exact re-inspection commands for the existing broker inspection surfaces:
+
+- `tt broker-orders live`
+- `tt broker-orders recent --limit N`
+
+These are display-only advisory hints for the current comparison window.
+They do not change comparison logic, broker state, or local state.
+
 In JSON mode, each result may include `recommended_actions`.
 
 ## What the comparison can conclude

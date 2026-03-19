@@ -148,6 +148,7 @@ Interpretation:
 Recommended use:
 
 - re-check broker visibility using both live and recent broker-order inspection
+- if `submit-state compare` prints `next_step=...`, run the suggested `tt broker-orders live` and `tt broker-orders recent --limit N` checks
 - continue treating local state as uncertain until manually verified
 - do not retry or clear local state automatically
 
