@@ -14,9 +14,10 @@ import (
 )
 
 var (
-	flagSubmitStateIdentity string
-	flagSubmitStateYes      bool
-	submitStateConfirmIn    io.Reader = os.Stdin
+	flagSubmitStateIdentity        string
+	flagSubmitStateInspectIdentity string
+	flagSubmitStateYes             bool
+	submitStateConfirmIn           io.Reader = os.Stdin
 )
 
 type SubmitStateRecordView struct {
@@ -48,7 +49,11 @@ They do NOT confirm broker outcome or reconcile broker-side orders.`,
 
 var submitStateInspectCmd = &cobra.Command{
 	Use:   "inspect",
-	Short: "Inspect persisted live submit safety state",
+	Short: "Inspect persisted live submit safety state, optionally by identity",
+	Long: `Inspect persisted live submit safety state.
+
+Use --identity to focus on one local submit state target before a manual clear.
+This command is read-only and does not change local or broker state.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runSubmitStateInspect(cmd.Context())
 	},
@@ -68,6 +73,7 @@ It does not confirm broker outcome or reconcile broker-side orders.`,
 }
 
 func init() {
+	submitStateInspectCmd.Flags().StringVar(&flagSubmitStateInspectIdentity, "identity", "", "Optional persisted submit identity key to inspect")
 	submitStateClearCmd.Flags().StringVar(&flagSubmitStateIdentity, "identity", "", "Persisted submit identity key to clear")
 	submitStateClearCmd.Flags().BoolVar(&flagSubmitStateYes, "yes", false, "Acknowledge local state clear non-interactively")
 	_ = submitStateClearCmd.MarkFlagRequired("identity")
@@ -91,7 +97,23 @@ func runSubmitStateInspect(_ context.Context) error {
 		fmt.Println("  persisted submit state is invalid or ambiguous; local safety state must be treated as uncertain")
 		return fmt.Errorf("submit-state inspect denied: %s", denyReason)
 	}
+	if flagSubmitStateInspectIdentity != "" {
+		fmt.Printf("Inspecting persisted live submit state for submit_identity=%s\n", flagSubmitStateInspectIdentity)
+	}
 	if len(records) == 0 {
+		if flagSubmitStateInspectIdentity != "" {
+			fmt.Printf("No persisted live submit state record found for submit_identity=%s.\n", flagSubmitStateInspectIdentity)
+		} else {
+			fmt.Println("No persisted live submit state records.")
+		}
+		return nil
+	}
+	records = filterSubmitStateRecordsByIdentity(records, flagSubmitStateInspectIdentity)
+	if len(records) == 0 {
+		if flagSubmitStateInspectIdentity != "" {
+			fmt.Printf("No persisted live submit state record found for submit_identity=%s.\n", flagSubmitStateInspectIdentity)
+			return nil
+		}
 		fmt.Println("No persisted live submit state records.")
 		return nil
 	}
@@ -115,6 +137,7 @@ func runSubmitStateClear(_ context.Context) error {
 	if !flagSubmitStateYes {
 		fmt.Println("LOCAL LIVE SUBMIT STATE CLEAR")
 		fmt.Println("This is explicit post-verification local cleanup only.")
+		fmt.Println("First inspect the target with tt submit-state inspect --identity <submit-identity>.")
 		fmt.Println("Before clearing, confirm broker truth manually with tt broker-orders live and tt broker-orders recent --limit N.")
 		fmt.Println("It does NOT confirm broker outcome or reconcile broker-side orders.")
 		fmt.Printf("Target identity: %s\n", flagSubmitStateIdentity)
@@ -156,6 +179,20 @@ func recordView(record submitIdentityRecord) SubmitStateRecordView {
 		view.UpdatedAt = record.UpdatedAt.Format(time.RFC3339)
 	}
 	return view
+}
+
+func filterSubmitStateRecordsByIdentity(records []SubmitStateRecordView, identity string) []SubmitStateRecordView {
+	identity = strings.TrimSpace(identity)
+	if identity == "" {
+		return records
+	}
+	filtered := make([]SubmitStateRecordView, 0, 1)
+	for _, record := range records {
+		if record.SubmitIdentity == identity {
+			filtered = append(filtered, record)
+		}
+	}
+	return filtered
 }
 
 func sortRecordViews(records []SubmitStateRecordView) {

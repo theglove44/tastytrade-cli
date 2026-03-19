@@ -14,6 +14,7 @@ func setupSubmitStateTest(t *testing.T) *submitIdentityRegistry {
 	r := withSubmitIdentityPersistence(t)
 	origFlagJSON := flagJSON
 	origFlagSubmitStateIdentity := flagSubmitStateIdentity
+	origFlagSubmitStateInspectIdentity := flagSubmitStateInspectIdentity
 	origFlagSubmitStateYes := flagSubmitStateYes
 	origFlagSubmitStateCompareLimit := flagSubmitStateCompareLimit
 	origFlagSubmitStateCompareAccount := flagSubmitStateCompareAccount
@@ -23,6 +24,7 @@ func setupSubmitStateTest(t *testing.T) *submitIdentityRegistry {
 	t.Cleanup(func() {
 		flagJSON = origFlagJSON
 		flagSubmitStateIdentity = origFlagSubmitStateIdentity
+		flagSubmitStateInspectIdentity = origFlagSubmitStateInspectIdentity
 		flagSubmitStateYes = origFlagSubmitStateYes
 		flagSubmitStateCompareLimit = origFlagSubmitStateCompareLimit
 		flagSubmitStateCompareAccount = origFlagSubmitStateCompareAccount
@@ -32,6 +34,7 @@ func setupSubmitStateTest(t *testing.T) *submitIdentityRegistry {
 	})
 	flagJSON = false
 	flagSubmitStateIdentity = ""
+	flagSubmitStateInspectIdentity = ""
 	flagSubmitStateYes = false
 	flagSubmitStateCompareLimit = 25
 	flagSubmitStateCompareAccount = ""
@@ -84,6 +87,54 @@ func TestSubmitStateInspect_PersistedInFlightState(t *testing.T) {
 		}
 	})
 	for _, want := range []string{"PERSISTED LIVE SUBMIT STATE", "state=in_flight", "account=ACCT-1", "intent=intent-1", "After manual broker verification, clear local state explicitly with tt submit-state clear --identity <submit-identity>.", "Reset only clears local safety state"} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("stdout = %q, missing %q", stdout, want)
+		}
+	}
+}
+
+func TestSubmitStateInspect_TargetIdentityFilterShowsOneRecord(t *testing.T) {
+	r := setupSubmitStateTest(t)
+	first, _ := deriveSubmitIdentity("ACCT-1", "intent-1", "hash-1")
+	second, _ := deriveSubmitIdentity("ACCT-1", "intent-2", "hash-2")
+	if result := r.reserve(first); !result.Allowed {
+		t.Fatalf("reserve first = %+v, want allowed", result)
+	}
+	if result := r.reserve(second); !result.Allowed {
+		t.Fatalf("reserve second = %+v, want allowed", result)
+	}
+	flagSubmitStateInspectIdentity = second.Key
+	stdout := captureStdoutOnly(t, func() {
+		if err := runSubmitStateInspect(context.Background()); err != nil {
+			t.Fatalf("runSubmitStateInspect: %v", err)
+		}
+	})
+	for _, want := range []string{
+		"Inspecting persisted live submit state for submit_identity=" + second.Key,
+		"submit_identity=" + second.Key,
+		"intent=intent-2",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("stdout = %q, missing %q", stdout, want)
+		}
+	}
+	if strings.Contains(stdout, first.Key) {
+		t.Fatalf("stdout = %q, unexpected other submit identity %q", stdout, first.Key)
+	}
+}
+
+func TestSubmitStateInspect_TargetIdentityFilterNoMatch(t *testing.T) {
+	setupSubmitStateTest(t)
+	flagSubmitStateInspectIdentity = "missing-identity"
+	stdout := captureStdoutOnly(t, func() {
+		if err := runSubmitStateInspect(context.Background()); err != nil {
+			t.Fatalf("runSubmitStateInspect: %v", err)
+		}
+	})
+	for _, want := range []string{
+		"Inspecting persisted live submit state for submit_identity=missing-identity",
+		"No persisted live submit state record found for submit_identity=missing-identity.",
+	} {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("stdout = %q, missing %q", stdout, want)
 		}

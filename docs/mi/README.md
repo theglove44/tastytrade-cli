@@ -120,3 +120,5 @@ Examples:
   - concludes the compare/detail lane is complete enough and recommends the next work elsewhere in the workflow
 - `MI-2026-03-19-phase8a-submit-state-clear-workflow.md`
   - tightens the manual post-verification submit-state clear workflow with clearer operator guidance and runbook alignment
+- `MI-2026-03-19-phase8b-submit-state-target-visibility.md`
+  - adds a focused read-only local submit-state inspection target filter for pre-clear verification
