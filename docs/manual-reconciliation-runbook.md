@@ -197,7 +197,7 @@ The current CLI cannot by itself prove:
 
 ## When local state may be cleared
 
-Local state may only be cleared through the already-supported explicit command after manual verification:
+Local state may only be cleared through the already-supported explicit command after manual broker verification:
 
 ```bash
 tt submit-state clear --identity <submit-identity>
@@ -213,7 +213,13 @@ Important warning:
 
 - clearing local state does not confirm broker outcome
 - clearing local state does not reconcile broker-side orders
-- clearing local state should happen only after manual verification
+- clearing local state should happen only after manual broker verification
+
+Recommended before clearing:
+
+- inspect broker truth manually with `tt broker-orders live`
+- inspect a recent broker slice manually with `tt broker-orders recent --limit N`
+- only then use `tt submit-state clear --identity <submit-identity>`
 
 ## Recommended manual workflow
 
@@ -228,6 +234,7 @@ Important warning:
    - `tt submit-state compare --account <account> --outcome <outcome> --limit N`
 5. use recommended next actions as a manual checklist
 6. only after manual verification, clear local state through the explicit supported command if appropriate
+7. keep clear as a local cleanup step only, after broker truth has already been checked
 
 ## Related docs
 

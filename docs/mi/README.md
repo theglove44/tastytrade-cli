@@ -116,3 +116,7 @@ Examples:
   - adds a minimal advisory handoff from submit-state compare results to the existing broker-order detail command
 - `MI-2026-03-18-phase7b-next-step-handoff-after-compare.md`
   - adds a minimal human-readable re-inspection handoff for compare results without broker_order_id
+- `MI-2026-03-19-phase7c-no-more-compare-detail.md`
+  - concludes the compare/detail lane is complete enough and recommends the next work elsewhere in the workflow
+- `MI-2026-03-19-phase8a-submit-state-clear-workflow.md`
+  - tightens the manual post-verification submit-state clear workflow with clearer operator guidance and runbook alignment

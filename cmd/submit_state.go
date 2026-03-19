@@ -56,7 +56,12 @@ var submitStateInspectCmd = &cobra.Command{
 
 var submitStateClearCmd = &cobra.Command{
 	Use:   "clear",
-	Short: "Clear one persisted live submit state record after manual verification",
+	Short: "Clear one persisted live submit state record after broker verification",
+	Long: `Clear one persisted live submit state record after you have manually verified broker truth.
+
+This command only removes local duplicate-submit / restart-recovery safety state.
+Use it as explicit post-verification cleanup, not as a reconciliation step.
+It does not confirm broker outcome or reconcile broker-side orders.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runSubmitStateClear(cmd.Context())
 	},
@@ -101,6 +106,7 @@ func runSubmitStateInspect(_ context.Context) error {
 			fmt.Printf("  deny_reason=%s\n", record.DenyReason)
 		}
 	}
+	fmt.Println("After manual broker verification, clear local state explicitly with tt submit-state clear --identity <submit-identity>.")
 	fmt.Println("Reset only clears local safety state; it does not confirm broker outcome.")
 	return nil
 }
@@ -108,7 +114,8 @@ func runSubmitStateInspect(_ context.Context) error {
 func runSubmitStateClear(_ context.Context) error {
 	if !flagSubmitStateYes {
 		fmt.Println("LOCAL LIVE SUBMIT STATE CLEAR")
-		fmt.Println("This only clears local duplicate-submit / restart-recovery safety state.")
+		fmt.Println("This is explicit post-verification local cleanup only.")
+		fmt.Println("Before clearing, confirm broker truth manually with tt broker-orders live and tt broker-orders recent --limit N.")
 		fmt.Println("It does NOT confirm broker outcome or reconcile broker-side orders.")
 		fmt.Printf("Target identity: %s\n", flagSubmitStateIdentity)
 		fmt.Print("Type 'clear' to confirm local state reset: ")
@@ -127,7 +134,8 @@ func runSubmitStateClear(_ context.Context) error {
 	}
 	if !flagJSON {
 		fmt.Println("✓ LOCAL LIVE SUBMIT STATE CLEARED")
-		fmt.Println("  Broker outcome remains unknown until manually verified.")
+		fmt.Println("  Local duplicate-submit / restart-recovery state removed.")
+		fmt.Println("  Broker truth must already have been verified manually; this command does not confirm it.")
 	}
 	return nil
 }

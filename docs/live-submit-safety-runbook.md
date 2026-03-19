@@ -227,7 +227,7 @@ tt submit-state inspect --json
 
 ## Persisted submit-state clear
 
-After manual broker/order verification, clear one local persisted identity:
+After manual broker/order verification, clear one local persisted identity as explicit local cleanup:
 
 ```bash
 tt submit-state clear --identity <submit-identity>
@@ -238,6 +238,12 @@ Non-interactive acknowledgement:
 ```bash
 tt submit-state clear --identity <submit-identity> --yes
 ```
+
+Important warning:
+
+- this only clears local duplicate-submit / restart-recovery safety state
+- it does not confirm broker outcome
+- it should only be used after broker truth has already been checked manually
 
 ### Important reset warning
 
