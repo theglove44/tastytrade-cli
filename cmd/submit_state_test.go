@@ -83,7 +83,7 @@ func TestSubmitStateInspect_PersistedInFlightState(t *testing.T) {
 			t.Fatalf("runSubmitStateInspect: %v", err)
 		}
 	})
-	for _, want := range []string{"PERSISTED LIVE SUBMIT STATE", "state=in_flight", "account=ACCT-1", "intent=intent-1", "Reset only clears local safety state"} {
+	for _, want := range []string{"PERSISTED LIVE SUBMIT STATE", "state=in_flight", "account=ACCT-1", "intent=intent-1", "After manual broker verification, clear local state explicitly with tt submit-state clear --identity <submit-identity>.", "Reset only clears local safety state"} {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("stdout = %q, missing %q", stdout, want)
 		}
@@ -107,6 +107,11 @@ func TestSubmitStateClear_DeniedWithoutExplicitConfirmation(t *testing.T) {
 	if !strings.Contains(stdout, "LOCAL LIVE SUBMIT STATE CLEAR") || !strings.Contains(stdout, "submit-state clear declined by operator") {
 		t.Fatalf("stdout = %q, want confirmation refusal output", stdout)
 	}
+	for _, want := range []string{"explicit post-verification local cleanup only", "tt broker-orders live", "tt broker-orders recent --limit N"} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("stdout = %q, missing %q", stdout, want)
+		}
+	}
 }
 
 func TestSubmitStateClear_ConfirmedResetClearsLocalPersistedState(t *testing.T) {
@@ -122,8 +127,10 @@ func TestSubmitStateClear_ConfirmedResetClearsLocalPersistedState(t *testing.T) 
 			t.Fatalf("runSubmitStateClear: %v", err)
 		}
 	})
-	if !strings.Contains(stdout, "✓ LOCAL LIVE SUBMIT STATE CLEARED") {
-		t.Fatalf("stdout = %q, want cleared output", stdout)
+	for _, want := range []string{"✓ LOCAL LIVE SUBMIT STATE CLEARED", "Local duplicate-submit / restart-recovery state removed.", "Broker truth must already have been verified manually; this command does not confirm it."} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("stdout = %q, missing %q", stdout, want)
+		}
 	}
 	views, _, err := r.inspect()
 	if err != nil {
