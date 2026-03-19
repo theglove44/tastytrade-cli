@@ -219,6 +219,12 @@ Human-readable:
 tt submit-state inspect
 ```
 
+Targeted local inspection:
+
+```bash
+tt submit-state inspect --identity <submit-identity>
+```
+
 JSON:
 
 ```bash
@@ -244,6 +250,7 @@ Important warning:
 - this only clears local duplicate-submit / restart-recovery safety state
 - it does not confirm broker outcome
 - it should only be used after broker truth has already been checked manually
+- it is helpful to verify the target locally first with `tt submit-state inspect --identity <submit-identity>`
 
 ### Important reset warning
 

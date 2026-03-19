@@ -34,6 +34,12 @@ Command:
 tt submit-state inspect
 ```
 
+For a specific local state target:
+
+```bash
+tt submit-state inspect --identity <submit-identity>
+```
+
 JSON:
 
 ```bash
@@ -217,6 +223,7 @@ Important warning:
 
 Recommended before clearing:
 
+- inspect the target local state explicitly with `tt submit-state inspect --identity <submit-identity>`
 - inspect broker truth manually with `tt broker-orders live`
 - inspect a recent broker slice manually with `tt broker-orders recent --limit N`
 - only then use `tt submit-state clear --identity <submit-identity>`
