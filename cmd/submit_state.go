@@ -140,8 +140,8 @@ func runSubmitStateClear(_ context.Context) error {
 		fmt.Println("First inspect the target with tt submit-state inspect --identity <submit-identity>.")
 		fmt.Println("Before clearing, confirm broker truth manually with tt broker-orders live and tt broker-orders recent --limit N.")
 		fmt.Println("It does NOT confirm broker outcome or reconcile broker-side orders.")
-		fmt.Printf("Target identity: %s\n", flagSubmitStateIdentity)
-		fmt.Print("Type 'clear' to confirm local state reset: ")
+		fmt.Printf("Target submit_identity=%s\n", flagSubmitStateIdentity)
+		fmt.Printf("Type 'clear' to confirm clearing local state for submit_identity=%s: ", flagSubmitStateIdentity)
 		reader := bufio.NewReader(submitStateConfirmIn)
 		line, err := reader.ReadString('\n')
 		if err != nil && err != io.EOF {
@@ -157,7 +157,7 @@ func runSubmitStateClear(_ context.Context) error {
 	}
 	if !flagJSON {
 		fmt.Println("✓ LOCAL LIVE SUBMIT STATE CLEARED")
-		fmt.Println("  Local duplicate-submit / restart-recovery state removed.")
+		fmt.Printf("  Local duplicate-submit / restart-recovery state removed for submit_identity=%s.\n", flagSubmitStateIdentity)
 		fmt.Println("  Broker truth must already have been verified manually; this command does not confirm it.")
 	}
 	return nil

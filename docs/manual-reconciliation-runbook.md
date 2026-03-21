@@ -227,6 +227,7 @@ Recommended before clearing:
 - inspect broker truth manually with `tt broker-orders live`
 - inspect a recent broker slice manually with `tt broker-orders recent --limit N`
 - only then use `tt submit-state clear --identity <submit-identity>`
+- the clear confirmation should name the exact `submit_identity` being removed
 
 ## Recommended manual workflow
 

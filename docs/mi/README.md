@@ -122,3 +122,5 @@ Examples:
   - tightens the manual post-verification submit-state clear workflow with clearer operator guidance and runbook alignment
 - `MI-2026-03-19-phase8b-submit-state-target-visibility.md`
   - adds a focused read-only local submit-state inspection target filter for pre-clear verification
+- `MI-2026-03-20-phase8c-submit-state-clear-confirmation-context.md`
+  - tightens the final clear confirmation so the operator sees the exact local target being removed

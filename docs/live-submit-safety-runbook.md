@@ -251,6 +251,7 @@ Important warning:
 - it does not confirm broker outcome
 - it should only be used after broker truth has already been checked manually
 - it is helpful to verify the target locally first with `tt submit-state inspect --identity <submit-identity>`
+- the confirmation step should name the exact `submit_identity` being cleared
 
 ### Important reset warning
 

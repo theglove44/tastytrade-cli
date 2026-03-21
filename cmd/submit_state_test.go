@@ -158,7 +158,7 @@ func TestSubmitStateClear_DeniedWithoutExplicitConfirmation(t *testing.T) {
 	if !strings.Contains(stdout, "LOCAL LIVE SUBMIT STATE CLEAR") || !strings.Contains(stdout, "submit-state clear declined by operator") {
 		t.Fatalf("stdout = %q, want confirmation refusal output", stdout)
 	}
-	for _, want := range []string{"explicit post-verification local cleanup only", "tt broker-orders live", "tt broker-orders recent --limit N"} {
+	for _, want := range []string{"explicit post-verification local cleanup only", "tt broker-orders live", "tt broker-orders recent --limit N", "Target submit_identity=" + identity.Key, "Type 'clear' to confirm clearing local state for submit_identity=" + identity.Key} {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("stdout = %q, missing %q", stdout, want)
 		}
@@ -178,7 +178,7 @@ func TestSubmitStateClear_ConfirmedResetClearsLocalPersistedState(t *testing.T) 
 			t.Fatalf("runSubmitStateClear: %v", err)
 		}
 	})
-	for _, want := range []string{"✓ LOCAL LIVE SUBMIT STATE CLEARED", "Local duplicate-submit / restart-recovery state removed.", "Broker truth must already have been verified manually; this command does not confirm it."} {
+	for _, want := range []string{"✓ LOCAL LIVE SUBMIT STATE CLEARED", "Local duplicate-submit / restart-recovery state removed for submit_identity=" + identity.Key + ".", "Broker truth must already have been verified manually; this command does not confirm it."} {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("stdout = %q, missing %q", stdout, want)
 		}
