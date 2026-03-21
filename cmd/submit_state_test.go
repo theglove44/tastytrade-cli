@@ -178,7 +178,7 @@ func TestSubmitStateClear_ConfirmedResetClearsLocalPersistedState(t *testing.T) 
 			t.Fatalf("runSubmitStateClear: %v", err)
 		}
 	})
-	for _, want := range []string{"✓ LOCAL LIVE SUBMIT STATE CLEARED", "Local duplicate-submit / restart-recovery state removed.", "Broker truth must already have been verified manually; this command does not confirm it."} {
+	for _, want := range []string{"✓ LOCAL LIVE SUBMIT STATE CLEARED", "Local duplicate-submit / restart-recovery state removed for submit_identity=" + identity.Key + ".", "Broker truth must already have been verified manually; this command does not confirm it."} {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("stdout = %q, missing %q", stdout, want)
 		}
@@ -189,6 +189,25 @@ func TestSubmitStateClear_ConfirmedResetClearsLocalPersistedState(t *testing.T) 
 	}
 	if len(views) != 0 {
 		t.Fatalf("views = %+v, want empty after clear", views)
+	}
+}
+
+func TestSubmitStateClear_MissingTargetReportsNothingCleared(t *testing.T) {
+	setupSubmitStateTest(t)
+	flagSubmitStateIdentity = "missing-identity"
+	submitStateConfirmIn = strings.NewReader("clear\n")
+	stdout := captureStdoutOnly(t, func() {
+		err := runSubmitStateClear(context.Background())
+		if err == nil {
+			t.Fatal("runSubmitStateClear error = nil, want missing target deny")
+		}
+	})
+	for _, want := range []string{
+		"No persisted live submit state record found for submit_identity=missing-identity; nothing was cleared.",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("stdout = %q, missing %q", stdout, want)
+		}
 	}
 }
 

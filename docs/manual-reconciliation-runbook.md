@@ -220,6 +220,8 @@ Important warning:
 - clearing local state does not confirm broker outcome
 - clearing local state does not reconcile broker-side orders
 - clearing local state should happen only after manual broker verification
+- the clear result should echo the exact `submit_identity` or say nothing was cleared for that target
+- the clear result should echo the exact `submit_identity` or say nothing was cleared for that target
 
 Recommended before clearing:
 
