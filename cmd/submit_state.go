@@ -153,14 +153,28 @@ func runSubmitStateClear(_ context.Context) error {
 		}
 	}
 	if err := liveSubmitIdentities.clear(flagSubmitStateIdentity); err != nil {
-		return err
+		return printSubmitStateClearOutcome(flagSubmitStateIdentity, err)
 	}
 	if !flagJSON {
 		fmt.Println("✓ LOCAL LIVE SUBMIT STATE CLEARED")
-		fmt.Println("  Local duplicate-submit / restart-recovery state removed.")
+		fmt.Printf("  Local duplicate-submit / restart-recovery state removed for submit_identity=%s.\n", flagSubmitStateIdentity)
 		fmt.Println("  Broker truth must already have been verified manually; this command does not confirm it.")
 	}
 	return nil
+}
+
+func printSubmitStateClearOutcome(identityKey string, err error) error {
+	if flagJSON {
+		return err
+	}
+	errText := err.Error()
+	switch {
+	case strings.Contains(errText, string(DuplicateSubmitUnknownState)):
+		fmt.Printf("No persisted live submit state record found for submit_identity=%s; nothing was cleared.\n", identityKey)
+	case strings.Contains(errText, string(DuplicateSubmitRestartUnknown)):
+		fmt.Printf("Persisted submit state is uncertain; submit_identity=%s was not cleared.\n", identityKey)
+	}
+	return err
 }
 
 func recordView(record submitIdentityRecord) SubmitStateRecordView {
