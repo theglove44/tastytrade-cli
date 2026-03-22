@@ -126,3 +126,7 @@ Examples:
   - tightens the final clear confirmation so the operator sees the exact local target being removed
 - `MI-2026-03-20-phase8d-submit-state-clear-result-clarity.md`
   - clarifies the post-clear result so the operator sees the exact target removed or that nothing was cleared
+- `MI-2026-03-22-phase8e-submit-state-clear-help-alignment.md`
+  - aligns submit-state help/examples with the inspect-before-clear manual workflow
+- `MI-2026-03-22-branch-closeout-helper.md`
+  - branch closeout helper script and Codex skill for staged commit, push, and upstream tracking

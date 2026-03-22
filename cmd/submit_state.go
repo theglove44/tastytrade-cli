@@ -45,6 +45,14 @@ var submitStateCmd = &cobra.Command{
 Use these commands with broker order inspection for manual reconciliation workflows.
 They only affect local duplicate-submit / restart-recovery safety state.
 They do NOT confirm broker outcome or reconcile broker-side orders.`,
+	Example: `  # inspect local submit safety state
+  tt submit-state inspect
+
+  # inspect one local target before clearing it
+  tt submit-state inspect --identity <submit-identity>
+
+  # clear one local target after manual broker verification
+  tt submit-state clear --identity <submit-identity>`,
 }
 
 var submitStateInspectCmd = &cobra.Command{
@@ -54,6 +62,8 @@ var submitStateInspectCmd = &cobra.Command{
 
 Use --identity to focus on one local submit state target before a manual clear.
 This command is read-only and does not change local or broker state.`,
+	Example: `  tt submit-state inspect
+  tt submit-state inspect --identity <submit-identity>`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runSubmitStateInspect(cmd.Context())
 	},
@@ -67,6 +77,8 @@ var submitStateClearCmd = &cobra.Command{
 This command only removes local duplicate-submit / restart-recovery safety state.
 Use it as explicit post-verification cleanup, not as a reconciliation step.
 It does not confirm broker outcome or reconcile broker-side orders.`,
+	Example: `  tt submit-state clear --identity <submit-identity>
+  tt submit-state clear --identity <submit-identity> --yes`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runSubmitStateClear(cmd.Context())
 	},
