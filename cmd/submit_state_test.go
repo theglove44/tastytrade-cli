@@ -228,3 +228,18 @@ func TestSubmitStateInspect_InvalidPersistedStateHandledSafely(t *testing.T) {
 		t.Fatalf("stdout = %q, want invalid-state deny output", stdout)
 	}
 }
+
+func TestSubmitStateHelpSurfacesInspectAndClearWorkflow(t *testing.T) {
+	if !strings.Contains(submitStateCmd.Example, "tt submit-state inspect --identity <submit-identity>") {
+		t.Fatalf("submitStateCmd.Example = %q, want inspect-before-clear example", submitStateCmd.Example)
+	}
+	if !strings.Contains(submitStateInspectCmd.Long, "before a manual clear") {
+		t.Fatalf("submitStateInspectCmd.Long = %q, want inspect-before-clear guidance", submitStateInspectCmd.Long)
+	}
+	if !strings.Contains(submitStateClearCmd.Example, "tt submit-state clear --identity <submit-identity>") {
+		t.Fatalf("submitStateClearCmd.Example = %q, want clear example", submitStateClearCmd.Example)
+	}
+	if !strings.Contains(submitStateClearCmd.Long, "explicit post-verification cleanup") {
+		t.Fatalf("submitStateClearCmd.Long = %q, want explicit cleanup guidance", submitStateClearCmd.Long)
+	}
+}
