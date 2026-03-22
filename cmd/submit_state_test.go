@@ -204,6 +204,33 @@ func TestSubmitStateClear_MissingTargetReportsNothingCleared(t *testing.T) {
 	})
 	for _, want := range []string{
 		"No persisted live submit state record found for submit_identity=missing-identity; nothing was cleared.",
+		"Re-check the target locally with tt submit-state inspect --identity missing-identity.",
+		"If you still need broker verification, inspect broker truth manually before retrying clear.",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("stdout = %q, missing %q", stdout, want)
+		}
+	}
+}
+
+func TestSubmitStateClear_UncertainTargetReportsRetryGuidance(t *testing.T) {
+	setupSubmitStateTest(t)
+	path, _ := submitIdentityStatePath()
+	if err := os.WriteFile(path, []byte(`{"version":1,"records":[{"state":"broken"}]}`), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	liveSubmitIdentities = freshSubmitIdentityRegistry()
+	flagSubmitStateIdentity = "uncertain-identity"
+	submitStateConfirmIn = strings.NewReader("clear\n")
+	stdout := captureStdoutOnly(t, func() {
+		err := runSubmitStateClear(context.Background())
+		if err == nil {
+			t.Fatal("runSubmitStateClear error = nil, want uncertain-state deny")
+		}
+	})
+	for _, want := range []string{
+		"Persisted submit state is uncertain; submit_identity=uncertain-identity was not cleared.",
+		"Re-run tt submit-state inspect --identity uncertain-identity and verify broker truth manually before retrying clear.",
 	} {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("stdout = %q, missing %q", stdout, want)

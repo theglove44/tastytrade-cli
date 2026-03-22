@@ -130,3 +130,5 @@ Examples:
   - aligns submit-state help/examples with the inspect-before-clear manual workflow
 - `MI-2026-03-22-branch-closeout-helper.md`
   - branch closeout helper script and Codex skill for staged commit, push, and upstream tracking
+- `MI-2026-03-22-phase8f-submit-state-clear-noop-guidance.md`
+  - refines submit-state clear no-op and uncertain-state guidance with explicit read-only next steps
