@@ -2,7 +2,7 @@ BINARY := tt
 MODULE := github.com/theglove44/tastytrade-cli
 BUILD_FLAGS := -ldflags="-s -w"
 
-.PHONY: build test lint clean run-sandbox env-check
+.PHONY: build test lint clean run-sandbox env-check closeout
 
 ## Build the binary
 build:
@@ -32,6 +32,12 @@ env-check:
 	@[ -n "$(TASTYTRADE_ACCOUNT_ID)" ]  || (echo "TASTYTRADE_ACCOUNT_ID not set" && exit 1)
 	@[ -n "$(TASTYTRADE_BASE_URL)" ]    || (echo "TASTYTRADE_BASE_URL not set" && exit 1)
 	@echo "✓ Required env vars set"
+
+## Close out the current branch with a generated commit message
+closeout:
+	@[ -n "$(MESSAGE)" ] || (echo "MESSAGE not set" && exit 1)
+	@[ -n "$(FILES)" ] || (echo "FILES not set" && exit 1)
+	@./scripts/branch_closeout.sh --message "$(MESSAGE)" $(FILES)
 
 ## Arm the kill switch
 kill:
