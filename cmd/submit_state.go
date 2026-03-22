@@ -183,8 +183,11 @@ func printSubmitStateClearOutcome(identityKey string, err error) error {
 	switch {
 	case strings.Contains(errText, string(DuplicateSubmitUnknownState)):
 		fmt.Printf("No persisted live submit state record found for submit_identity=%s; nothing was cleared.\n", identityKey)
+		fmt.Printf("Re-check the target locally with tt submit-state inspect --identity %s.\n", identityKey)
+		fmt.Println("If you still need broker verification, inspect broker truth manually before retrying clear.")
 	case strings.Contains(errText, string(DuplicateSubmitRestartUnknown)):
 		fmt.Printf("Persisted submit state is uncertain; submit_identity=%s was not cleared.\n", identityKey)
+		fmt.Printf("Re-run tt submit-state inspect --identity %s and verify broker truth manually before retrying clear.\n", identityKey)
 	}
 	return err
 }
